@@ -1,0 +1,21 @@
+{
+  "pixel": {
+    "name": "Pixel Copilot",
+    "kb_dir": "data/kb_pixel",
+    "index_dir": "data/index_pixel",
+    "description": "Google Pixel device support"
+  },
+  "finance": {
+    "name": "Finance Assistant",
+    "kb_dir": "data/kb_finance",
+    "index_dir": "data/index_finance",
+    "description": "Personal finance guidance"
+  },
+  "healthcare": {
+    "name": "Healthcare Assistant",
+    "kb_dir": "data/kb_healthcare",
+    "index_dir": "data/index_healthcare",
+    "description": "General health and wellness"
+  }
+}
+

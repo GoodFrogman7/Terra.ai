@@ -1,0 +1,83 @@
+# Google Pixel — Quickstart KB (Sample)
+
+# 1) Enable Call Screen (Pixel Call Assist)
+Call Screen helps you screen calls and decline spam automatically.
+
+**Steps**
+1. Open the **Phone** app.  
+2. Tap **More** → **Settings** → **Spam and Call Screen**/**Call Screen**.  
+3. Choose your **Protection level**. On Pixel 7 and above, you can auto‑screen spam, suspected fakes, and first‑time callers.  
+4. Follow on‑screen instructions if prompted.
+
+**Official docs**  
+- Screen your calls before you answer them — Phone app Help: https://support.google.com/phoneapp/answer/9118387  
+- Call Assist overview (store article): https://store.google.com/intl/en/ideas/articles/pixel-call-assist-phone-screen/
+
+---
+
+## 2) Dual SIM, eSIM, and DSDS on Pixel
+Pixels support Dual SIM Dual Standby (DSDS). Availability depends on model and carrier.
+
+**Key points**
+- Pixel 7/7 Pro and later can use **two eSIM profiles at once** if supported by your carrier.  
+- You can also use **one physical SIM + one eSIM** (DSDS), depending on your model and carrier.  
+- For specific Pixel 9/9a details and SKUs, check your carrier support pages.
+
+**Official docs**  
+- How to use dual SIMs on your Pixel phone (requirements & setup): https://support.google.com/pixelphone/answer/9449293  
+- Connect to mobile networks / eSIM overview hub: https://support.google.com/pixelphone/answer/2926415  
+- IMEI info for eSIM/DSDS (IMEI2): https://support.google.com/pixelphone/answer/10402530
+
+---
+
+## 3) Transfer your data to a new Pixel
+Use the Pixel setup flow to copy apps, photos, messages, and settings.
+
+**Steps (high‑level)**
+1. Power on the new Pixel and follow the setup wizard.  
+2. Choose **Express** to transfer your Google Account and backed‑up data, or **Customize** to pick specific items.  
+3. Use the included Quick Switch Adapter or cable for fastest transfer, or restore from cloud backup.
+
+**Official docs**  
+- Transfer data from your previous device to a Pixel: https://support.google.com/pixelphone/answer/7129955  
+- Set up your Pixel phone: https://support.google.com/pixelphone/answer/7158475  
+- Guidebook: Transfer and restore from backup: https://guidebooks.google.com/pixel/transfer-your-data/how-to-switch-from-android
+
+---
+
+## 4) Find a lost Pixel (Find Hub / Find My Device)
+Ensure device location and the Find network are enabled so you can locate, lock, or erase your phone if lost.
+
+**Prepare**
+1. On your Pixel, open **Settings** → **Google** → **All services** → **Personal & device safety** → **Find Hub** (naming may vary).  
+2. Turn on **Allow device to be located** and join the Find network where available.
+
+**Use it when lost**
+- Go to **android.com/find** (Find Hub / Find My Device) to ring, locate, lock, or erase your device.  
+- Some recent Pixels can be located even when offline or powered off for a short time (feature availability varies by model/region).
+
+**Official docs**  
+- Be ready to find a lost device (account help): https://support.google.com/accounts/answer/3265955  
+- Find, secure, or erase a lost Android device: https://support.google.com/android/answer/6160491  
+- Find Hub (about): https://www.google.com/android/find/about
+
+**Background articles**  
+- Android’s Find network upgrades (context): https://www.wired.com/story/android-find-my-device-upgrade-whats-new
+
+---
+
+## 5) Troubleshooting tips (quick)
+- **Wi‑Fi drops**: Toggle Airplane mode, forget/reconnect network, reboot router/phone, check for system updates.  
+- **Battery drain**: Review battery usage, disable high refresh rate/Always‑On display temporarily, check recently installed apps.  
+- **eSIM activation fails**: Confirm carrier eSIM support for your model; ensure IMEI2 is correct and device is on latest software.
+
+---
+
+## 6) Order & tracking (integration placeholder)
+If the copilot is linked to your shopping accounts (e.g., Amazon/Flipkart/Shopify), it can fetch **recent orders**, **status**, **ETA**, and **tracking links**.  
+> This requires user consent (OAuth) and provider APIs. No device‑level app scraping is performed.
+
+---
+
+### Change log
+- v1.0 (sample): Initial Pixel quickstart KB compiled from public Google help articles.
