@@ -13,7 +13,7 @@ from core.graph.graph import compiled as agent
 app = FastAPI(title="Terra.ai API")
 
 # Include memory routes (additive - does not modify existing behavior)
-from apps.pixel_copilot_api.memory_routes import router as memory_router
+from apps.api.memory_routes import router as memory_router
 app.include_router(memory_router)
 KB_ROOT = Path(os.getenv("KB_DIR","data/kb")).resolve()
 KB_ROOT.mkdir(parents=True, exist_ok=True)

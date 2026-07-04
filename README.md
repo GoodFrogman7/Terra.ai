@@ -23,12 +23,12 @@ pip install -r requirements.txt
 # In UI, pick a summarizer LLM (or choose "none" to use heuristic)
 
 # Start API
-uvicorn apps.pixel_copilot_api.main:app --reload --port 8000
+uvicorn apps.api.main:app --reload --port 8000
 
 # Start UI (new terminal)
 .\.venv\Scripts\Activate.ps1
 $env:COPILOT_API_BASE = "http://127.0.0.1:8000"
-streamlit run apps\pixel_copilot_ui\app.py
+streamlit run apps\ui\app.py
 ```
 
 ### Notes

@@ -26,11 +26,11 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Run API (from repo root)
-uvicorn apps.pixel_copilot_api.main:app --reload --port 8000
+uvicorn apps.api.main:app --reload --port 8000
 
 # Run UI (separate terminal, after activating venv)
 $env:COPILOT_API_BASE = "http://127.0.0.1:8000"
-streamlit run apps\pixel_copilot_ui\app.py
+streamlit run apps\ui\app.py
 
 # Rebuild a domain's KB index (domain: finance | healthcare)
 python -m core.rag.retriever rebuild finance
@@ -103,9 +103,9 @@ Two domains — `finance`, `healthcare` — each with its own KB directory (`dat
 - `ChatStore` — full chat session history (ChatGPT-style), used by the UI's chat sidebar.
 - `MemoryStore` — long-term facts/preferences + chat summaries, separate from raw chat history.
 
-`core/memory/context_builder.py` builds a memory-context string injected into agent state via `_inject_memory_context` in `nodes.py`'s `intake` node — explicitly designed as **additive-only**: it must never mutate existing state keys, only add new `_memory_*` prefixed ones, and must degrade gracefully (try/except) if the memory module is unavailable. `apps/pixel_copilot_api/memory_routes.py` exposes this under the API's `/memory` prefix and is likewise additive to `main.py`'s core `/chat` behavior.
+`core/memory/context_builder.py` builds a memory-context string injected into agent state via `_inject_memory_context` in `nodes.py`'s `intake` node — explicitly designed as **additive-only**: it must never mutate existing state keys, only add new `_memory_*` prefixed ones, and must degrade gracefully (try/except) if the memory module is unavailable. `apps/api/memory_routes.py` exposes this under the API's `/memory` prefix and is likewise additive to `main.py`'s core `/chat` behavior.
 
-### API surface (`apps/pixel_copilot_api/main.py`)
+### API surface (`apps/api/main.py`)
 
 - `POST /chat` / `GET /chat_stream` (SSE) — both build the same graph `state` dict and invoke `agent.ainvoke(state)`; keep their state-construction logic in sync when adding new fields.
 - `POST /upload` — validates extension and 10MB size cap, saves under `KB_DIR` with a UUID filename, then immediately rebuilds the (legacy, non-domain-scoped) index.
@@ -119,7 +119,7 @@ Two domains — `finance`, `healthcare` — each with its own KB directory (`dat
 
 ## Before modifying code
 
-Read and understand, in this order, before changing behavior: the graph flow (`core/graph/graph.py`, `core/graph/nodes.py`), the retrieval pipeline (`core/rag/retriever.py`), memory injection (`core/memory/context_builder.py`, `_inject_memory_context` in `nodes.py`), and the API routes (`apps/pixel_copilot_api/main.py`, `memory_routes.py`). These are tightly coupled through the shared graph `state` dict — a change in one usually has implications in the others.
+Read and understand, in this order, before changing behavior: the graph flow (`core/graph/graph.py`, `core/graph/nodes.py`), the retrieval pipeline (`core/rag/retriever.py`), memory injection (`core/memory/context_builder.py`, `_inject_memory_context` in `nodes.py`), and the API routes (`apps/api/main.py`, `memory_routes.py`). These are tightly coupled through the shared graph `state` dict — a change in one usually has implications in the others.
 
 Do not refactor working retrieval logic (`core/rag/retriever.py` chunking/embedding/scoring) unless explicitly requested.
 
