@@ -1,0 +1,38 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    # Pull a small CPU-friendly model on first run:
+    #   docker compose exec ollama ollama pull llama3.2
+    #   docker compose exec ollama ollama pull nomic-embed-text
+
+  api:
+    build: .
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      # TAVILY_API_KEY: set via .env file or shell to enable web-search fallback
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      - ollama
+
+  ui:
+    build: .
+    command: streamlit run apps/ui/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      COPILOT_API_BASE: http://api:8000
+    depends_on:
+      - api
+
+volumes:
+  ollama_models:
+  app_data:

@@ -5,7 +5,7 @@ import concurrent.futures
 
 from core.rag.retriever import kb_retrieve_with_confidence
 from core.tools.web_search import web_search_bundle
-from core.tools.youtube_search import get_youtube_suggestions, get_youtube_suggestions_structured
+from core.tools.youtube_search import get_youtube_suggestions_structured
 from core.safety.policies import requires_human_review
 from core.llm.summarizer import summarize, _ollama_generate
 
@@ -99,21 +99,18 @@ def _resolve_video_query(query: str, messages: List[Dict]) -> str:
     return query
 
 
-def _get_youtube_nonblocking(query: str, max_results: int = 6, timeout: float = 3.0) -> tuple:
+def _get_youtube_nonblocking(query: str, max_results: int = 6, timeout: float = 3.0) -> List[Dict]:
     """
     Fetch YouTube suggestions with strict timeout.
     YouTube is AUXILIARY - must never block or delay the main answer.
-    Returns: (html_string, structured_list)
+    Returns structured video list; the UI renders the cards.
     """
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            future_html = executor.submit(get_youtube_suggestions, query, max_results)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future_data = executor.submit(get_youtube_suggestions_structured, query, max_results)
-            html = future_html.result(timeout=timeout)
-            data = future_data.result(timeout=timeout)
-            return (html, data)
+            return future_data.result(timeout=timeout)
     except (concurrent.futures.TimeoutError, Exception):
-        return ("", [])  # Silently fail - YouTube is auxiliary
+        return []  # Silently fail - YouTube is auxiliary
 
 
 def _is_general_knowledge_question(query: str) -> bool:
@@ -240,9 +237,9 @@ def answer_from_kb(state: Dict[str, Any]) -> Dict[str, Any]:
     
     # Handle video-first requests: YouTube takes priority, no web fallback
     if is_video_request and state.get("youtube_enabled", False):
-        yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
+        yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
-            answer = f"Here are some video suggestions for you:{yt_html}"
+            answer = "Here are some video suggestions for you:"
             payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             if _CACHE_ENABLED:
                 _ANSWER_CACHE[cache_k] = payload
@@ -256,14 +253,10 @@ def answer_from_kb(state: Dict[str, Any]) -> Dict[str, Any]:
     answer = summarize(state["query"], top, mode="kb", model=model)
     answer = f"**(KB)** {answer}"
 
-    # STEP 2: Append YouTube AFTER answer is ready (non-blocking, auxiliary only)
+    # STEP 2: Fetch YouTube AFTER answer is ready (non-blocking, auxiliary only)
     youtube_suggestions = []
     if state.get("youtube_enabled", False):
-        yt_html, yt_data = _get_youtube_nonblocking(state["query"], max_results=6, timeout=3.0)
-        if yt_html:
-            answer += yt_html
-        if yt_data:
-            youtube_suggestions = yt_data
+        youtube_suggestions = _get_youtube_nonblocking(state["query"], max_results=6, timeout=3.0)
 
     payload = {"answer": answer, "citations": _build_citations(top), "source": "kb", "youtube_suggestions": youtube_suggestions}
     if _CACHE_ENABLED:
@@ -279,9 +272,9 @@ def kb_no_answer(state: Dict[str, Any]) -> Dict[str, Any]:
     
     # Handle video-first requests: YouTube takes priority
     if is_video_request and state.get("youtube_enabled", False):
-        yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
+        yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
-            answer = f"Here are some video suggestions for you:{yt_html}"
+            answer = "Here are some video suggestions for you:"
             payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             return {**state, **payload}
 
@@ -314,9 +307,9 @@ def synthesize_research(state: Dict[str, Any]) -> Dict[str, Any]:
     video_query = state.get("_video_query", state["query"])
     
     if is_video_request and state.get("youtube_enabled", False):
-        yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
+        yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
-            answer = f"Here are some video suggestions for you:{yt_html}"
+            answer = "Here are some video suggestions for you:"
             payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             if _CACHE_ENABLED:
                 _ANSWER_CACHE[cache_k] = payload
@@ -343,14 +336,10 @@ def synthesize_research(state: Dict[str, Any]) -> Dict[str, Any]:
         answer = f"**(Web)** {answer}"
         citations = _build_citations(top)
 
-    # STEP 3: Append YouTube AFTER answer is ready (non-blocking, auxiliary only)
+    # STEP 3: Fetch YouTube AFTER answer is ready (non-blocking, auxiliary only)
     youtube_suggestions = []
     if state.get("youtube_enabled", False):
-        yt_html, yt_data = _get_youtube_nonblocking(state["query"], max_results=6, timeout=3.0)
-        if yt_html:
-            answer += yt_html
-        if yt_data:
-            youtube_suggestions = yt_data
+        youtube_suggestions = _get_youtube_nonblocking(state["query"], max_results=6, timeout=3.0)
 
     payload = {"answer": answer, "citations": citations, "source": source, "youtube_suggestions": youtube_suggestions}
     if _CACHE_ENABLED:

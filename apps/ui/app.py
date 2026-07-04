@@ -64,6 +64,26 @@ def _api_delete_chat(chat_id: str):
         return False
 
 
+@st.cache_data(ttl=300)
+def _api_get_config() -> dict:
+    """Fetch domains/models/backends from the API (single source of truth)."""
+    try:
+        r = requests.get(f"{API_BASE}/config", timeout=10)
+        if r.ok:
+            return r.json()
+    except Exception:
+        pass
+    # Fallback if API is unreachable at first render
+    return {
+        "domains": {
+            "finance": {"name": "Finance Assistant", "description": ""},
+            "healthcare": {"name": "Healthcare Assistant", "description": ""},
+        },
+        "summarizer_models": ["none", "llama3.2"],
+        "embed_backends": ["hash", "ollama:nomic-embed-text"],
+    }
+
+
 def _format_timestamp(ts: str) -> str:
     """Format timestamp for display."""
     try:
@@ -83,17 +103,19 @@ def _format_timestamp(ts: str) -> str:
 
 st.set_page_config(page_title="Terra.ai", layout="wide")
 
+# Load config from API (domains, models, backends) — single source of truth
+_config = _api_get_config()
+_domains = _config.get("domains", {})
+
 # Initialize domain state
+_default_domain = next(iter(_domains), "finance")
 if "last_domain" not in st.session_state:
-    st.session_state.last_domain = "finance"
+    st.session_state.last_domain = _default_domain
 
 # Dynamic title based on agent mode
-agent_titles = {
-    "finance": "Terra.ai — Finance Assistant (KB-first → Web fallback)",
-    "healthcare": "Terra.ai — Healthcare Assistant (KB-first → Web fallback)"
-}
-current_domain = st.session_state.get("last_domain", "finance")
-st.title(agent_titles[current_domain])
+current_domain = st.session_state.get("last_domain", _default_domain)
+_domain_display = _domains.get(current_domain, {}).get("name", current_domain.title())
+st.title(f"Terra.ai — {_domain_display} (KB-first → Web fallback)")
 
 
 def _extract_topic(question: str) -> str:
@@ -321,23 +343,28 @@ with st.sidebar:
     
     agent_mode = st.selectbox(
         "Select Agent",
-        ["Finance Assistant", "Healthcare Assistant"],
+        [v.get("name", k) for k, v in _domains.items()],
         key="agent_mode"
     )
 
-    # Map to domain names
-    domain_map = {
-        "Finance Assistant": "finance",
-        "Healthcare Assistant": "healthcare"
-    }
+    # Map display names back to domain keys (from API config)
+    domain_map = {v.get("name", k): k for k, v in _domains.items()}
     current_domain = domain_map[agent_mode]
-    
-    # Reset chat on domain switch
+
+    # Preserve chat history per domain on switch (no destructive wipe)
+    if "domain_chats" not in st.session_state:
+        st.session_state.domain_chats = {}
     if "last_domain" not in st.session_state:
         st.session_state.last_domain = current_domain
     elif st.session_state.last_domain != current_domain:
-        st.session_state.chat_history = []
-        st.session_state.persistent_chat_id = None
+        # Stash the outgoing domain's conversation, restore the incoming one
+        st.session_state.domain_chats[st.session_state.last_domain] = {
+            "history": st.session_state.chat_history,
+            "chat_id": st.session_state.persistent_chat_id,
+        }
+        restored = st.session_state.domain_chats.get(current_domain, {})
+        st.session_state.chat_history = restored.get("history", [])
+        st.session_state.persistent_chat_id = restored.get("chat_id")
         st.session_state.last_domain = current_domain
         st.rerun()
     
@@ -358,19 +385,19 @@ with st.sidebar:
     web_enabled = st.checkbox("Enable Web Search (fallback)", value=True)
     youtube_enabled = st.checkbox("Enable YouTube Suggestions", value=False)
 
-    embed_choice = st.selectbox("Embeddings backend", [
-        "hash (local, no keys)",
-        "ollama:nomic-embed-text",
-        "ollama:mxbai-embed-large",
-    ], index=1)  # Default to ollama:nomic-embed-text to match index
-    embed_backend = "hash" if embed_choice.startswith("hash") else embed_choice
+    _embed_options = _config.get("embed_backends", ["hash"])
+    _embed_default = _embed_options.index("ollama:nomic-embed-text") if "ollama:nomic-embed-text" in _embed_options else 0
+    embed_backend = st.selectbox(
+        "Embeddings backend", _embed_options, index=_embed_default,
+        help='"hash" is local with no dependencies; ollama:* backends need Ollama running',
+    )
 
-    sum_choice = st.selectbox("Summarizer LLM (Ollama)", [
-        "none (heuristic)",
-        "ollama:llama3.2",
-        "ollama:deepseek-r1:1.5b",
-    ])
-    summarizer_model = "none" if sum_choice.startswith("none") else sum_choice.split("ollama:",1)[1]
+    _sum_options = _config.get("summarizer_models", ["none"])
+    _sum_default = _sum_options.index("none") if "none" in _sum_options else 0
+    summarizer_model = st.selectbox(
+        "Summarizer LLM (Ollama)", _sum_options, index=_sum_default,
+        help='"none" uses a fast deterministic heuristic; other options need the model pulled in Ollama',
+    )
 
     show_graph = st.checkbox("Show agent graph", value=True)
 
@@ -415,6 +442,8 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
         "summarizer_model": summarizer_model,
         "history": json.dumps(history_msgs)
     }
+    placeholder = st.empty()
+    placeholder.markdown("_Thinking…_")
     with requests.get(f"{API_BASE}/chat_stream", params=params, stream=True, timeout=180) as r:
         r.raise_for_status()
         answer_chunks = []
@@ -426,13 +455,15 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
                 payload = json.loads(line[6:])
                 if "delta" in payload:
                     answer_chunks.append(payload["delta"])
+                    # Incremental render with a typing cursor
+                    placeholder.markdown("".join(answer_chunks) + " ▌")
                 if payload.get("done"):
                     youtube_suggestions = payload.get("youtube_suggestions", [])
                     citations = payload.get("citations", [])
                     source = payload.get("source", "unknown")
                     break
         full_answer = "".join(answer_chunks)
-        st.markdown(full_answer)
+        placeholder.markdown(full_answer)
 
         # Trust indicator: flag answers that aren't grounded in KB/web sources
         if source in ("general_knowledge", "none"):
@@ -464,7 +495,7 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
                     title = video.get("title", "Video")
                     thumbnail = video.get("thumbnail_url", "")
 
-                    yt_ok = video_url.startswith("https://www.youtube.com/watch?v=") or video_url.startswith("https://youtu.be/")
+                    yt_ok = video_url.startswith(("https://www.youtube.com/watch?v=", "https://youtube.com/watch?v=", "https://youtu.be/"))
                     thumb_ok = thumbnail.startswith("https://img.youtube.com/vi/")
 
                     if yt_ok and thumb_ok:

@@ -7,6 +7,16 @@ A grounded, citation-backed AI support assistant for regulated industries (finan
 - LLM summarization via **Ollama** (llama3.1:8b, mistral:7b, gemma3:4b) or **none** (heuristic fallback)
 - Upload to KB (PDF/MD/TXT/CSV/JSON). Auto-index on first query.
 - Conversational chat, re-ranking, caching, intent thresholds, graph viz
+- Analytics dashboard (grounded-answer rate, citation rate, escalations) at the "Analytics" page in the UI
+
+## Run with Docker (recommended)
+```bash
+docker compose up --build -d
+# First run only: pull the local models
+docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull nomic-embed-text
+```
+UI at http://localhost:8501, API at http://localhost:8000. Optional: put `TAVILY_API_KEY=...` in a `.env` file to enable web-search fallback.
 
 ## Run (Windows PowerShell)
 ```powershell

@@ -15,6 +15,19 @@ app = FastAPI(title="Terra.ai API")
 # Include memory routes (additive - does not modify existing behavior)
 from apps.api.memory_routes import router as memory_router
 app.include_router(memory_router)
+
+from core.analytics.store import get_analytics_store
+
+def _log_interaction(final: Dict[str, Any], domain: str, query: str) -> None:
+    """Record interaction metrics; never raises."""
+    get_analytics_store().log_interaction(
+        domain=domain,
+        source=final.get("source", "unknown"),
+        kb_conf=final.get("kb_conf"),
+        num_citations=len(final.get("citations", [])),
+        policy_flags=final.get("policy_flags", []),
+        query_chars=len(query or ""),
+    )
 KB_ROOT = Path(os.getenv("KB_DIR","data/kb")).resolve()
 KB_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -65,6 +78,25 @@ class ChatResponse(BaseModel):
 def healthz():
     return {"ok": True, "kb_dir": str(KB_ROOT)}
 
+@app.get("/analytics/summary")
+def analytics_summary(domain: Optional[str] = None):
+    """Aggregate resolution/grounding metrics for the dashboard."""
+    store = get_analytics_store()
+    return {"summary": store.summary(domain=domain), "recent": store.recent(limit=50)}
+
+@app.get("/config")
+def get_config():
+    """Single source of truth for UI dropdowns: domains, models, backends."""
+    domains_path = Path("config/domains.json")
+    domains = {}
+    if domains_path.exists():
+        domains = json.loads(domains_path.read_text(encoding="utf-8"))
+    return {
+        "domains": {k: {"name": v.get("name", k), "description": v.get("description", "")} for k, v in domains.items()},
+        "summarizer_models": sorted(ALLOWED_SUMMARIZER_MODELS),
+        "embed_backends": sorted(ALLOWED_EMBED_BACKENDS),
+    }
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 
 @app.post("/upload")
@@ -113,6 +145,7 @@ async def chat(req: ChatRequest):
         "summarizer_model": (req.summarizer_model or "none"),
     }
     final = await agent.ainvoke(state)
+    _log_interaction(final, req.domain, req.message)
     return ChatResponse(
         answer=final.get("answer",""),
         citations=final.get("citations",[]),
@@ -164,6 +197,7 @@ async def chat_stream(
             "summarizer_model": (summarizer_model or "none"),
         }
         final = await agent.ainvoke(state)
+        _log_interaction(final, domain, message)
         full = final.get("answer","")
         citations = final.get("citations",[])
         source = final.get("source","unknown")
