@@ -30,6 +30,7 @@ services:
     environment:
       # Internal-only: the Streamlit *server* calls the API; the browser never does.
       COPILOT_API_BASE: http://api:8000
+      DEMO_MODE: ${DEMO_MODE:-}
     depends_on:
       - api
     # No ports: reachable only via caddy on the internal network.
