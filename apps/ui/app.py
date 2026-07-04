@@ -8,6 +8,10 @@ from core.graph.graph import graph_dot
 
 API_BASE = os.getenv("COPILOT_API_BASE", "http://127.0.0.1:8000")
 
+# Demo mode hides engineering internals (agent graph, retrieval/embedding knobs)
+# so public/prospect deployments present a clean product surface, not a lab console.
+DEMO_MODE = os.getenv("DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
+
 
 # ============ Auth Helpers ============
 
@@ -472,27 +476,39 @@ with st.sidebar:
     if memory_enabled != st.session_state.memory_enabled:
         st.session_state.memory_enabled = memory_enabled
     
-    kb_threshold = st.slider("KB Confidence Threshold (τ)", 0.0, 0.95, 0.45, 0.01)
-    research_only = st.checkbox("Research only (skip KB)", value=False)
-    rerank = st.checkbox("Enable Re-ranking", value=True)
+    # Web search is a user-facing product feature, so keep it visible in demo mode.
     web_enabled = st.checkbox("Enable Web Search (fallback)", value=True)
-    youtube_enabled = st.checkbox("Enable YouTube Suggestions", value=False)
 
-    _embed_options = _config.get("embed_backends", ["hash"])
-    _embed_default = _embed_options.index("ollama:nomic-embed-text") if "ollama:nomic-embed-text" in _embed_options else 0
-    embed_backend = st.selectbox(
-        "Embeddings backend", _embed_options, index=_embed_default,
-        help='"hash" is local with no dependencies; ollama:* backends need Ollama running',
-    )
+    if DEMO_MODE:
+        # Clean product surface: hide engineering internals, use sane fixed defaults.
+        kb_threshold = 0.45
+        research_only = False
+        rerank = True
+        youtube_enabled = False
+        embed_backend = "hash"
+        summarizer_model = "none"
+        show_graph = False
+    else:
+        kb_threshold = st.slider("KB Confidence Threshold (τ)", 0.0, 0.95, 0.45, 0.01)
+        research_only = st.checkbox("Research only (skip KB)", value=False)
+        rerank = st.checkbox("Enable Re-ranking", value=True)
+        youtube_enabled = st.checkbox("Enable YouTube Suggestions", value=False)
 
-    _sum_options = _config.get("summarizer_models", ["none"])
-    _sum_default = _sum_options.index("none") if "none" in _sum_options else 0
-    summarizer_model = st.selectbox(
-        "Summarizer LLM (Ollama)", _sum_options, index=_sum_default,
-        help='"none" uses a fast deterministic heuristic; other options need the model pulled in Ollama',
-    )
+        _embed_options = _config.get("embed_backends", ["hash"])
+        _embed_default = _embed_options.index("ollama:nomic-embed-text") if "ollama:nomic-embed-text" in _embed_options else 0
+        embed_backend = st.selectbox(
+            "Embeddings backend", _embed_options, index=_embed_default,
+            help='"hash" is local with no dependencies; ollama:* backends need Ollama running',
+        )
 
-    show_graph = st.checkbox("Show agent graph", value=True)
+        _sum_options = _config.get("summarizer_models", ["none"])
+        _sum_default = _sum_options.index("none") if "none" in _sum_options else 0
+        summarizer_model = st.selectbox(
+            "Summarizer LLM (Ollama)", _sum_options, index=_sum_default,
+            help='"none" uses a fast deterministic heuristic; other options need the model pulled in Ollama',
+        )
+
+        show_graph = st.checkbox("Show agent graph", value=True)
 
     st.markdown("---")
     st.subheader(f"Upload to KB ({_domain_display})")
