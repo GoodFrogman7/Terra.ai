@@ -8,6 +8,7 @@ A grounded, citation-backed AI support assistant for regulated industries (finan
 - Upload to KB (PDF/MD/TXT/CSV/JSON). Auto-index on first query.
 - Conversational chat, re-ranking, caching, intent thresholds, graph viz
 - Analytics dashboard (grounded-answer rate, citation rate, escalations) at the "Analytics" page in the UI
+- Optional multi-user auth via Supabase: set `SUPABASE_URL` + `SUPABASE_ANON_KEY` in `.env` and every user gets isolated chats/memories behind email+password login; leave unset for single-user local mode
 
 ## Run with Docker (recommended)
 ```bash

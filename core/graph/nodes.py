@@ -162,7 +162,8 @@ def _inject_memory_context(state: Dict[str, Any]) -> Dict[str, Any]:
         from core.memory.context_builder import build_memory_context
         
         chat_id = state.get("chat_id")  # If provided by API
-        memory_ctx = build_memory_context(chat_id=chat_id, max_memories=5)
+        user_id = state.get("user_id") or "local"
+        memory_ctx = build_memory_context(chat_id=chat_id, max_memories=5, user_id=user_id)
         
         # Add memory context as new keys (additive only)
         state["_memory_context"] = memory_ctx.get("memory_context_text", "")

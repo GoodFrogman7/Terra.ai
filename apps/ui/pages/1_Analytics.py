@@ -14,11 +14,15 @@ st.title("📊 Terra.ai Analytics")
 st.caption("Resolution and grounding metrics across all chat interactions.")
 
 
-@st.cache_data(ttl=30)
 def _fetch_analytics(domain: str | None = None) -> dict:
     try:
         params = {"domain": domain} if domain else {}
-        r = requests.get(f"{API_BASE}/analytics/summary", params=params, timeout=10)
+        token = st.session_state.get("access_token")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        r = requests.get(f"{API_BASE}/analytics/summary", params=params, headers=headers, timeout=10)
+        if r.status_code == 401:
+            st.warning("Please log in on the main page first.")
+            st.stop()
         if r.ok:
             return r.json()
     except Exception as e:

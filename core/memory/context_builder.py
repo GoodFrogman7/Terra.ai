@@ -16,7 +16,8 @@ def build_memory_context(
     chat_id: Optional[str] = None,
     include_long_term: bool = True,
     max_messages: int = 10,
-    max_memories: int = 5
+    max_memories: int = 5,
+    user_id: str = "local"
 ) -> Dict[str, Any]:
     """
     Build context from memory to inject into agent state.
@@ -40,7 +41,7 @@ def build_memory_context(
     }
     
     # Load current chat history
-    if chat_id and chat_store.chat_exists(chat_id):
+    if chat_id and chat_store.chat_exists(chat_id, user_id=user_id):
         messages = chat_store.get_messages(chat_id, limit=max_messages)
         result["chat_history"] = [
             {"role": m["role"], "content": m["content"]}
@@ -50,7 +51,7 @@ def build_memory_context(
     
     # Load long-term memory
     if include_long_term:
-        memories = memory_store.get_memories(limit=max_memories)
+        memories = memory_store.get_memories(limit=max_memories, user_id=user_id)
         result["long_term_memory"] = memories
         result["injected_memory_ids"] = [m["memory_id"] for m in memories]
         logger.debug(f"[MEMORY_CONTEXT] Loaded {len(memories)} long-term memories, ids={result['injected_memory_ids']}")

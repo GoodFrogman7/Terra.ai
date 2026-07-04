@@ -2,13 +2,14 @@
 API routes for chat sessions and memory management.
 These are ADDITIVE routes - they don't modify existing API behavior.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import logging
 import os
 
 from core.memory.store import get_chat_store, get_memory_store
+from core.auth.supabase_auth import get_current_user
 from core.memory.context_builder import extract_title_from_message
 
 logger = logging.getLogger("memory_routes")
@@ -87,19 +88,19 @@ class UpdateTitleRequest(BaseModel):
 # ============ Chat Session Routes ============
 
 @router.post("/chats", response_model=CreateChatResponse)
-def create_chat(req: CreateChatRequest):
+def create_chat(req: CreateChatRequest, user: Dict[str, Any] = Depends(get_current_user)):
     """Create a new chat session."""
     chat_store = get_chat_store()
-    chat_id = chat_store.create_chat(title=req.title or "New Chat")
+    chat_id = chat_store.create_chat(title=req.title or "New Chat", user_id=user["user_id"])
     logger.debug(f"[API] Created chat: chat_id={chat_id}")
     return CreateChatResponse(chat_id=chat_id, title=req.title or "New Chat")
 
 
 @router.get("/chats", response_model=ChatListResponse)
-def list_chats(limit: int = 50, offset: int = 0):
+def list_chats(limit: int = 50, offset: int = 0, user: Dict[str, Any] = Depends(get_current_user)):
     """List all chat sessions, ordered by most recent."""
     chat_store = get_chat_store()
-    chats = chat_store.list_chats(limit=limit, offset=offset)
+    chats = chat_store.list_chats(limit=limit, offset=offset, user_id=user["user_id"])
     return ChatListResponse(
         chats=[ChatListItem(**c) for c in chats],
         total=len(chats)
@@ -107,10 +108,10 @@ def list_chats(limit: int = 50, offset: int = 0):
 
 
 @router.get("/chats/{chat_id}", response_model=ChatResponse)
-def get_chat(chat_id: str):
+def get_chat(chat_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Get a specific chat with all messages."""
     chat_store = get_chat_store()
-    chat = chat_store.get_chat(chat_id)
+    chat = chat_store.get_chat(chat_id, user_id=user["user_id"])
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     
@@ -135,11 +136,11 @@ def get_chat(chat_id: str):
 
 
 @router.post("/chats/{chat_id}/messages")
-def add_message(chat_id: str, req: AddMessageRequest):
+def add_message(chat_id: str, req: AddMessageRequest, user: Dict[str, Any] = Depends(get_current_user)):
     """Add a message to a chat."""
     chat_store = get_chat_store()
     
-    if not chat_store.chat_exists(chat_id):
+    if not chat_store.chat_exists(chat_id, user_id=user["user_id"]):
         raise HTTPException(status_code=404, detail="Chat not found")
     
     msg_id = chat_store.add_message(
@@ -150,7 +151,7 @@ def add_message(chat_id: str, req: AddMessageRequest):
     )
     
     # Auto-update title from first user message
-    chat = chat_store.get_chat(chat_id)
+    chat = chat_store.get_chat(chat_id, user_id=user["user_id"])
     if chat and chat["title"] == "New Chat":
         user_messages = [m for m in chat["messages"] if m["role"] == "user"]
         if len(user_messages) == 1:
@@ -163,11 +164,11 @@ def add_message(chat_id: str, req: AddMessageRequest):
 
 
 @router.patch("/chats/{chat_id}")
-def update_chat_title(chat_id: str, req: UpdateTitleRequest):
+def update_chat_title(chat_id: str, req: UpdateTitleRequest, user: Dict[str, Any] = Depends(get_current_user)):
     """Update a chat's title."""
     chat_store = get_chat_store()
     
-    if not chat_store.chat_exists(chat_id):
+    if not chat_store.chat_exists(chat_id, user_id=user["user_id"]):
         raise HTTPException(status_code=404, detail="Chat not found")
     
     chat_store.update_title(chat_id, req.title)
@@ -176,24 +177,24 @@ def update_chat_title(chat_id: str, req: UpdateTitleRequest):
 
 
 @router.delete("/chats/{chat_id}")
-def delete_chat(chat_id: str):
+def delete_chat(chat_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Delete a chat and all its messages."""
     chat_store = get_chat_store()
     
-    if not chat_store.chat_exists(chat_id):
+    if not chat_store.chat_exists(chat_id, user_id=user["user_id"]):
         raise HTTPException(status_code=404, detail="Chat not found")
     
-    chat_store.delete_chat(chat_id)
+    chat_store.delete_chat(chat_id, user_id=user["user_id"])
     logger.debug(f"[API] Deleted chat: chat_id={chat_id}")
     return {"ok": True}
 
 
 @router.get("/chats/{chat_id}/messages")
-def get_messages(chat_id: str, limit: Optional[int] = None):
+def get_messages(chat_id: str, limit: Optional[int] = None, user: Dict[str, Any] = Depends(get_current_user)):
     """Get messages from a chat."""
     chat_store = get_chat_store()
     
-    if not chat_store.chat_exists(chat_id):
+    if not chat_store.chat_exists(chat_id, user_id=user["user_id"]):
         raise HTTPException(status_code=404, detail="Chat not found")
     
     messages = chat_store.get_messages(chat_id, limit=limit)
@@ -215,13 +216,14 @@ def get_messages(chat_id: str, limit: Optional[int] = None):
 # ============ Long-term Memory Routes ============
 
 @router.post("/memories", response_model=MemoryResponse)
-def add_memory(req: AddMemoryRequest):
+def add_memory(req: AddMemoryRequest, user: Dict[str, Any] = Depends(get_current_user)):
     """Add a new long-term memory."""
     memory_store = get_memory_store()
     memory_id = memory_store.add_memory(
         content=req.content,
         category=req.category,
-        importance=req.importance
+        importance=req.importance,
+        user_id=user["user_id"]
     )
     
     logger.debug(f"[API] Added memory: memory_id={memory_id}")
@@ -231,15 +233,16 @@ def add_memory(req: AddMemoryRequest):
         category=req.category,
         content=req.content,
         created_at="",  # Will be filled by store
-        importance=req.importance
+        importance=req.importance,
+        user_id=user["user_id"]
     )
 
 
 @router.get("/memories", response_model=MemoryListResponse)
-def list_memories(category: Optional[str] = None, limit: int = 20):
+def list_memories(category: Optional[str] = None, limit: int = 20, user: Dict[str, Any] = Depends(get_current_user)):
     """List long-term memories."""
     memory_store = get_memory_store()
-    memories = memory_store.get_memories(category=category, limit=limit)
+    memories = memory_store.get_memories(category=category, limit=limit, user_id=user["user_id"])
     
     return MemoryListResponse(
         memories=[
@@ -256,10 +259,10 @@ def list_memories(category: Optional[str] = None, limit: int = 20):
 
 
 @router.delete("/memories/{memory_id}")
-def delete_memory(memory_id: str):
+def delete_memory(memory_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     """Delete a long-term memory."""
     memory_store = get_memory_store()
-    memory_store.delete_memory(memory_id)
+    memory_store.delete_memory(memory_id, user_id=user["user_id"])
     logger.debug(f"[API] Deleted memory: memory_id={memory_id}")
     return {"ok": True}
 

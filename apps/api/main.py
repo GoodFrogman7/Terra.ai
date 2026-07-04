@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
@@ -17,8 +17,9 @@ from apps.api.memory_routes import router as memory_router
 app.include_router(memory_router)
 
 from core.analytics.store import get_analytics_store
+from core.auth.supabase_auth import get_current_user, auth_enabled, sign_up, sign_in
 
-def _log_interaction(final: Dict[str, Any], domain: str, query: str) -> None:
+def _log_interaction(final: Dict[str, Any], domain: str, query: str, user_id: str = "local") -> None:
     """Record interaction metrics; never raises."""
     get_analytics_store().log_interaction(
         domain=domain,
@@ -27,7 +28,29 @@ def _log_interaction(final: Dict[str, Any], domain: str, query: str) -> None:
         num_citations=len(final.get("citations", [])),
         policy_flags=final.get("policy_flags", []),
         query_chars=len(query or ""),
+        user_id=user_id,
     )
+
+class AuthCredentials(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    password: str = Field(..., min_length=6, max_length=128)
+
+@app.get("/auth/status")
+def auth_status():
+    """Whether the deployment requires login (Supabase configured) or runs in local mode."""
+    return {"auth_enabled": auth_enabled()}
+
+@app.post("/auth/signup")
+def auth_signup(creds: AuthCredentials):
+    if not auth_enabled():
+        return {"ok": True, "local_mode": True}
+    return sign_up(creds.email, creds.password)
+
+@app.post("/auth/login")
+def auth_login(creds: AuthCredentials):
+    if not auth_enabled():
+        return {"ok": True, "local_mode": True}
+    return sign_in(creds.email, creds.password)
 KB_ROOT = Path(os.getenv("KB_DIR","data/kb")).resolve()
 KB_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +102,7 @@ def healthz():
     return {"ok": True, "kb_dir": str(KB_ROOT)}
 
 @app.get("/analytics/summary")
-def analytics_summary(domain: Optional[str] = None):
+def analytics_summary(domain: Optional[str] = None, user: Dict[str, Any] = Depends(get_current_user)):
     """Aggregate resolution/grounding metrics for the dashboard."""
     store = get_analytics_store()
     return {"summary": store.summary(domain=domain), "recent": store.recent(limit=50)}
@@ -100,7 +123,7 @@ def get_config():
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), user: Dict[str, Any] = Depends(get_current_user)):
     suffix_ok = {".md",".markdown",".txt",".csv",".json",".pdf"}
     ext = Path(file.filename).suffix.lower()
     if ext not in suffix_ok:
@@ -121,12 +144,12 @@ async def upload(file: UploadFile = File(...)):
     return {"ok": True, "path": str(target), "indexed_docs": len(idx.get("entries", []))}
 
 @app.post("/reindex")
-def reindex():
+def reindex(user: Dict[str, Any] = Depends(get_current_user)):
     idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
     return {"ok": True, "indexed_docs": len(idx.get("entries", []))}
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user)):
     if req.kb_threshold is not None:
         os.environ["KB_CONFIDENCE_THRESHOLD"] = str(req.kb_threshold)
     if req.embed_backend:
@@ -135,7 +158,7 @@ async def chat(req: ChatRequest):
     state = {
         "query": req.message,
         "messages": [m.model_dump() for m in req.messages],
-        "user_id": req.user_id,
+        "user_id": user["user_id"],
         "domain": req.domain,
         "force_research": bool(req.research_only),
         "rerank": bool(req.rerank),
@@ -145,7 +168,7 @@ async def chat(req: ChatRequest):
         "summarizer_model": (req.summarizer_model or "none"),
     }
     final = await agent.ainvoke(state)
-    _log_interaction(final, req.domain, req.message)
+    _log_interaction(final, req.domain, req.message, user_id=user["user_id"])
     return ChatResponse(
         answer=final.get("answer",""),
         citations=final.get("citations",[]),
@@ -157,7 +180,6 @@ async def chat(req: ChatRequest):
 @app.get("/chat_stream")
 async def chat_stream(
     request: Request,
-    user_id: Optional[str] = None,
     message: str = "",
     domain: str = "finance",  # finance, healthcare
     kb_threshold: Optional[float] = None,
@@ -168,6 +190,7 @@ async def chat_stream(
     youtube_enabled: Optional[bool] = None,
     summarizer_model: Optional[str] = None,
     history: Optional[str] = None,
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     def sse(payload: dict) -> str:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -187,7 +210,7 @@ async def chat_stream(
         state = {
             "query": message,
             "messages": messages,
-            "user_id": user_id,
+            "user_id": user["user_id"],
             "domain": domain,  # NEW: pass domain to agent
             "force_research": bool(research_only),
             "rerank": bool(rerank),
@@ -197,7 +220,7 @@ async def chat_stream(
             "summarizer_model": (summarizer_model or "none"),
         }
         final = await agent.ainvoke(state)
-        _log_interaction(final, domain, message)
+        _log_interaction(final, domain, message, user_id=user["user_id"])
         full = final.get("answer","")
         citations = final.get("citations",[])
         source = final.get("source","unknown")

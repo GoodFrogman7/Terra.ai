@@ -26,6 +26,17 @@ def _ensure_db_dir(db_path: Path):
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
+DEFAULT_USER_ID = "local"
+
+
+def _ensure_user_id_column(conn, table: str):
+    """Migration guard: add user_id to pre-multi-tenancy databases."""
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if "user_id" not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}'")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_user_id ON {table}(user_id)")
+
+
 class ChatStore:
     """
     Persistent store for chat sessions.
@@ -60,7 +71,8 @@ class ChatStore:
                     chat_id TEXT PRIMARY KEY,
                     title TEXT NOT NULL DEFAULT 'New Chat',
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    user_id TEXT NOT NULL DEFAULT 'local'
                 )
             """)
             conn.execute("""
@@ -75,19 +87,20 @@ class ChatStore:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)")
+            _ensure_user_id_column(conn, "chats")
             conn.commit()
 
-    def create_chat(self, title: str = "New Chat") -> str:
+    def create_chat(self, title: str = "New Chat", user_id: str = DEFAULT_USER_ID) -> str:
         """Create a new chat session. Returns chat_id."""
         chat_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO chats (chat_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (chat_id, title, now, now)
+                "INSERT INTO chats (chat_id, title, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?)",
+                (chat_id, title, now, now, user_id)
             )
             conn.commit()
-        logger.debug(f"[CHAT_STORE] Created chat: chat_id={chat_id}, title={title}")
+        logger.debug(f"[CHAT_STORE] Created chat: chat_id={chat_id}, title={title}, user_id={user_id}")
         return chat_id
 
     def add_message(
@@ -111,11 +124,11 @@ class ChatStore:
         logger.debug(f"[CHAT_STORE] Added message: chat_id={chat_id}, role={role}, msg_id={msg_id}")
         return msg_id
 
-    def get_chat(self, chat_id: str) -> Optional[Dict[str, Any]]:
-        """Get a chat with all its messages."""
+    def get_chat(self, chat_id: str, user_id: str = DEFAULT_USER_ID) -> Optional[Dict[str, Any]]:
+        """Get a chat with all its messages (scoped to the owning user)."""
         with self._get_conn() as conn:
             chat_row = conn.execute(
-                "SELECT * FROM chats WHERE chat_id = ?", (chat_id,)
+                "SELECT * FROM chats WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
             ).fetchone()
             if not chat_row:
                 return None
@@ -170,12 +183,12 @@ class ChatStore:
                 messages.append(msg)
             return messages
 
-    def list_chats(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        """List all chats, ordered by most recently updated."""
+    def list_chats(self, limit: int = 50, offset: int = 0, user_id: str = DEFAULT_USER_ID) -> List[Dict[str, Any]]:
+        """List the user's chats, ordered by most recently updated."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM chats ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                (limit, offset)
+                "SELECT * FROM chats WHERE user_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset)
             ).fetchall()
             return [
                 {
@@ -198,19 +211,24 @@ class ChatStore:
             conn.commit()
         logger.debug(f"[CHAT_STORE] Updated title: chat_id={chat_id}, title={title}")
 
-    def delete_chat(self, chat_id: str):
-        """Delete a chat and all its messages."""
+    def delete_chat(self, chat_id: str, user_id: str = DEFAULT_USER_ID):
+        """Delete a chat and all its messages (only if owned by the user)."""
         with self._get_conn() as conn:
+            owned = conn.execute(
+                "SELECT 1 FROM chats WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
+            ).fetchone()
+            if not owned:
+                return
             conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
             conn.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
             conn.commit()
         logger.debug(f"[CHAT_STORE] Deleted chat: chat_id={chat_id}")
 
-    def chat_exists(self, chat_id: str) -> bool:
-        """Check if a chat exists."""
+    def chat_exists(self, chat_id: str, user_id: str = DEFAULT_USER_ID) -> bool:
+        """Check if a chat exists for this user."""
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT 1 FROM chats WHERE chat_id = ?", (chat_id,)
+                "SELECT 1 FROM chats WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
             ).fetchone()
             return row is not None
 
@@ -250,7 +268,8 @@ class MemoryStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     importance INTEGER DEFAULT 1,
-                    access_count INTEGER DEFAULT 0
+                    access_count INTEGER DEFAULT 0,
+                    user_id TEXT NOT NULL DEFAULT 'local'
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)")
@@ -259,9 +278,12 @@ class MemoryStore:
                     chat_id TEXT PRIMARY KEY,
                     summary TEXT NOT NULL,
                     topics TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    user_id TEXT NOT NULL DEFAULT 'local'
                 )
             """)
+            _ensure_user_id_column(conn, "memories")
+            _ensure_user_id_column(conn, "chat_summaries")
             conn.commit()
 
     def add_memory(
@@ -269,17 +291,18 @@ class MemoryStore:
         content: str,
         category: str = "general",
         source_chat_id: Optional[str] = None,
-        importance: int = 1
+        importance: int = 1,
+        user_id: str = DEFAULT_USER_ID
     ) -> str:
         """Add a new memory. Returns memory_id."""
         memory_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         with self._get_conn() as conn:
             conn.execute(
-                """INSERT INTO memories 
-                   (memory_id, category, content, source_chat_id, created_at, updated_at, importance)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (memory_id, category, content, source_chat_id, now, now, importance)
+                """INSERT INTO memories
+                   (memory_id, category, content, source_chat_id, created_at, updated_at, importance, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (memory_id, category, content, source_chat_id, now, now, importance, user_id)
             )
             conn.commit()
         logger.debug(f"[MEMORY_STORE] Added memory: memory_id={memory_id}, category={category}")
@@ -288,21 +311,22 @@ class MemoryStore:
     def get_memories(
         self,
         category: Optional[str] = None,
-        limit: int = 20
+        limit: int = 20,
+        user_id: str = DEFAULT_USER_ID
     ) -> List[Dict[str, Any]]:
-        """Get memories, optionally filtered by category."""
+        """Get the user's memories, optionally filtered by category."""
         with self._get_conn() as conn:
             if category:
                 rows = conn.execute(
-                    """SELECT * FROM memories WHERE category = ? 
+                    """SELECT * FROM memories WHERE user_id = ? AND category = ?
                        ORDER BY importance DESC, updated_at DESC LIMIT ?""",
-                    (category, limit)
+                    (user_id, category, limit)
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT * FROM memories 
+                    """SELECT * FROM memories WHERE user_id = ?
                        ORDER BY importance DESC, updated_at DESC LIMIT ?""",
-                    (limit,)
+                    (user_id, limit)
                 ).fetchall()
             
             # Update access count
@@ -329,48 +353,48 @@ class MemoryStore:
                 for row in rows
             ]
 
-    def update_memory(self, memory_id: str, content: str, importance: Optional[int] = None):
-        """Update a memory's content."""
+    def update_memory(self, memory_id: str, content: str, importance: Optional[int] = None, user_id: str = DEFAULT_USER_ID):
+        """Update a memory's content (only if owned by the user)."""
         now = datetime.utcnow().isoformat()
         with self._get_conn() as conn:
             if importance is not None:
                 conn.execute(
-                    "UPDATE memories SET content = ?, importance = ?, updated_at = ? WHERE memory_id = ?",
-                    (content, importance, now, memory_id)
+                    "UPDATE memories SET content = ?, importance = ?, updated_at = ? WHERE memory_id = ? AND user_id = ?",
+                    (content, importance, now, memory_id, user_id)
                 )
             else:
                 conn.execute(
-                    "UPDATE memories SET content = ?, updated_at = ? WHERE memory_id = ?",
-                    (content, now, memory_id)
+                    "UPDATE memories SET content = ?, updated_at = ? WHERE memory_id = ? AND user_id = ?",
+                    (content, now, memory_id, user_id)
                 )
             conn.commit()
         logger.debug(f"[MEMORY_STORE] Updated memory: memory_id={memory_id}")
 
-    def delete_memory(self, memory_id: str):
-        """Delete a memory."""
+    def delete_memory(self, memory_id: str, user_id: str = DEFAULT_USER_ID):
+        """Delete a memory (only if owned by the user)."""
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
+            conn.execute("DELETE FROM memories WHERE memory_id = ? AND user_id = ?", (memory_id, user_id))
             conn.commit()
         logger.debug(f"[MEMORY_STORE] Deleted memory: memory_id={memory_id}")
 
-    def save_chat_summary(self, chat_id: str, summary: str, topics: List[str]):
+    def save_chat_summary(self, chat_id: str, summary: str, topics: List[str], user_id: str = DEFAULT_USER_ID):
         """Save a summarized version of a chat."""
         now = datetime.utcnow().isoformat()
         topics_json = json.dumps(topics, ensure_ascii=False)
         with self._get_conn() as conn:
             conn.execute(
-                """INSERT OR REPLACE INTO chat_summaries (chat_id, summary, topics, created_at)
-                   VALUES (?, ?, ?, ?)""",
-                (chat_id, summary, topics_json, now)
+                """INSERT OR REPLACE INTO chat_summaries (chat_id, summary, topics, created_at, user_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (chat_id, summary, topics_json, now, user_id)
             )
             conn.commit()
         logger.debug(f"[MEMORY_STORE] Saved chat summary: chat_id={chat_id}")
 
-    def get_chat_summary(self, chat_id: str) -> Optional[Dict[str, Any]]:
+    def get_chat_summary(self, chat_id: str, user_id: str = DEFAULT_USER_ID) -> Optional[Dict[str, Any]]:
         """Get a chat summary."""
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT * FROM chat_summaries WHERE chat_id = ?", (chat_id,)
+                "SELECT * FROM chat_summaries WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)
             ).fetchone()
             if not row:
                 return None
@@ -381,12 +405,12 @@ class MemoryStore:
                 "created_at": row["created_at"],
             }
 
-    def get_all_summaries(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent chat summaries for context."""
+    def get_all_summaries(self, limit: int = 10, user_id: str = DEFAULT_USER_ID) -> List[Dict[str, Any]]:
+        """Get the user's recent chat summaries for context."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM chat_summaries ORDER BY created_at DESC LIMIT ?",
-                (limit,)
+                "SELECT * FROM chat_summaries WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit)
             ).fetchall()
             return [
                 {

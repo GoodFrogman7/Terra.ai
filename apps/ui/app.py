@@ -8,12 +8,49 @@ from core.graph.graph import graph_dot
 
 API_BASE = os.getenv("COPILOT_API_BASE", "http://127.0.0.1:8000")
 
+
+# ============ Auth Helpers ============
+
+def _auth_headers() -> dict:
+    """Bearer-token header for API calls (empty in local mode)."""
+    token = st.session_state.get("access_token")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+@st.cache_data(ttl=300)
+def _api_auth_status() -> bool:
+    """Whether this deployment requires login."""
+    try:
+        r = requests.get(f"{API_BASE}/auth/status", timeout=10)
+        if r.ok:
+            return bool(r.json().get("auth_enabled"))
+    except Exception:
+        pass
+    return False
+
+
+def _api_login(email: str, password: str) -> dict:
+    r = requests.post(f"{API_BASE}/auth/login", json={"email": email, "password": password}, timeout=20)
+    if r.ok:
+        return r.json()
+    detail = r.json().get("detail", "Login failed") if r.content else "Login failed"
+    raise RuntimeError(detail)
+
+
+def _api_signup(email: str, password: str) -> dict:
+    r = requests.post(f"{API_BASE}/auth/signup", json={"email": email, "password": password}, timeout=20)
+    if r.ok:
+        return r.json()
+    detail = r.json().get("detail", "Signup failed") if r.content else "Signup failed"
+    raise RuntimeError(detail)
+
+
 # ============ Memory/Chat API Helpers ============
 
 def _api_create_chat(title: str = "New Chat") -> dict:
     """Create a new chat via API."""
     try:
-        r = requests.post(f"{API_BASE}/memory/chats", json={"title": title}, timeout=10)
+        r = requests.post(f"{API_BASE}/memory/chats", json={"title": title}, headers=_auth_headers(), timeout=10)
         if r.ok:
             return r.json()
     except Exception as e:
@@ -24,7 +61,7 @@ def _api_create_chat(title: str = "New Chat") -> dict:
 def _api_list_chats(limit: int = 50) -> list:
     """List all chats from API."""
     try:
-        r = requests.get(f"{API_BASE}/memory/chats", params={"limit": limit}, timeout=10)
+        r = requests.get(f"{API_BASE}/memory/chats", params={"limit": limit}, headers=_auth_headers(), timeout=10)
         if r.ok:
             return r.json().get("chats", [])
     except Exception:
@@ -35,7 +72,7 @@ def _api_list_chats(limit: int = 50) -> list:
 def _api_get_chat(chat_id: str) -> dict:
     """Get a chat by ID from API."""
     try:
-        r = requests.get(f"{API_BASE}/memory/chats/{chat_id}", timeout=10)
+        r = requests.get(f"{API_BASE}/memory/chats/{chat_id}", headers=_auth_headers(), timeout=10)
         if r.ok:
             return r.json()
     except Exception:
@@ -49,7 +86,7 @@ def _api_add_message(chat_id: str, role: str, content: str, metadata: dict = Non
         payload = {"role": role, "content": content}
         if metadata:
             payload["metadata"] = metadata
-        r = requests.post(f"{API_BASE}/memory/chats/{chat_id}/messages", json=payload, timeout=10)
+        r = requests.post(f"{API_BASE}/memory/chats/{chat_id}/messages", json=payload, headers=_auth_headers(), timeout=10)
         return r.ok
     except Exception:
         return False
@@ -58,7 +95,7 @@ def _api_add_message(chat_id: str, role: str, content: str, metadata: dict = Non
 def _api_delete_chat(chat_id: str):
     """Delete a chat."""
     try:
-        r = requests.delete(f"{API_BASE}/memory/chats/{chat_id}", timeout=10)
+        r = requests.delete(f"{API_BASE}/memory/chats/{chat_id}", headers=_auth_headers(), timeout=10)
         return r.ok
     except Exception:
         return False
@@ -102,6 +139,43 @@ def _format_timestamp(ts: str) -> str:
         return ""
 
 st.set_page_config(page_title="Terra.ai", layout="wide")
+
+# ============ Login Gate ============
+if _api_auth_status() and not st.session_state.get("access_token"):
+    st.title("Terra.ai")
+    st.caption("Grounded, citation-backed AI support for regulated industries.")
+    login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
+    with login_tab:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Log in", use_container_width=True):
+                try:
+                    result = _api_login(email, password)
+                    token = result.get("access_token")
+                    if token:
+                        st.session_state.access_token = token
+                        st.session_state.user_email = result.get("user", {}).get("email", email)
+                        st.rerun()
+                    st.error("Unexpected response from auth server.")
+                except Exception as e:
+                    st.error(str(e))
+    with signup_tab:
+        with st.form("signup_form"):
+            email_s = st.text_input("Email", key="signup_email")
+            password_s = st.text_input("Password (min 6 chars)", type="password", key="signup_password")
+            if st.form_submit_button("Create account", use_container_width=True):
+                try:
+                    result = _api_signup(email_s, password_s)
+                    token = (result.get("session") or {}).get("access_token") or result.get("access_token")
+                    if token:
+                        st.session_state.access_token = token
+                        st.session_state.user_email = email_s
+                        st.rerun()
+                    st.success("Account created. Check your email to confirm, then log in.")
+                except Exception as e:
+                    st.error(str(e))
+    st.stop()
 
 # Load config from API (domains, models, backends) — single source of truth
 _config = _api_get_config()
@@ -296,6 +370,17 @@ with st.sidebar:
     </style>
     """, unsafe_allow_html=True)
     
+    if st.session_state.get("access_token"):
+        st.caption(f"Signed in as {st.session_state.get('user_email', 'user')}")
+        if st.button("Log out", use_container_width=True):
+            st.session_state.pop("access_token", None)
+            st.session_state.pop("user_email", None)
+            st.session_state.chat_history = []
+            st.session_state.persistent_chat_id = None
+            st.session_state.chat_list_cache = []
+            st.rerun()
+        st.markdown("---")
+
     st.subheader("💬 Chats")
     
     # New Chat Button
@@ -407,7 +492,7 @@ with st.sidebar:
     if up is not None:
         files = {"file": (up.name, up.getvalue())}
         try:
-            r = requests.post(f"{API_BASE}/upload", files=files, timeout=120)
+            r = requests.post(f"{API_BASE}/upload", files=files, headers=_auth_headers(), timeout=120)
             if r.ok and r.json().get("ok"):
                 st.success(f"Uploaded: {up.name}")
         except Exception as e:
@@ -444,7 +529,7 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
     }
     placeholder = st.empty()
     placeholder.markdown("_Thinking…_")
-    with requests.get(f"{API_BASE}/chat_stream", params=params, stream=True, timeout=180) as r:
+    with requests.get(f"{API_BASE}/chat_stream", params=params, headers=_auth_headers(), stream=True, timeout=180) as r:
         r.raise_for_status()
         answer_chunks = []
         youtube_suggestions = []

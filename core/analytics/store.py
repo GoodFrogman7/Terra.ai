@@ -47,11 +47,16 @@ class AnalyticsStore:
                     kb_conf REAL,
                     num_citations INTEGER DEFAULT 0,
                     policy_flags TEXT,
-                    query_chars INTEGER DEFAULT 0
+                    query_chars INTEGER DEFAULT 0,
+                    user_id TEXT NOT NULL DEFAULT 'local'
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_ts ON interactions(ts)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_domain ON interactions(domain)")
+            # Migration guard for pre-multi-tenancy databases
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(interactions)")}
+            if "user_id" not in cols:
+                conn.execute("ALTER TABLE interactions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
             conn.commit()
 
     def log_interaction(
@@ -62,14 +67,15 @@ class AnalyticsStore:
         num_citations: int = 0,
         policy_flags: Optional[List[str]] = None,
         query_chars: int = 0,
+        user_id: str = "local",
     ) -> None:
         """Record one chat interaction. Swallows errors — analytics must never break chat."""
         try:
             with self._get_conn() as conn:
                 conn.execute(
                     """INSERT INTO interactions
-                       (ts, domain, source, kb_conf, num_citations, policy_flags, query_chars)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (ts, domain, source, kb_conf, num_citations, policy_flags, query_chars, user_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         datetime.utcnow().isoformat(),
                         domain,
@@ -78,6 +84,7 @@ class AnalyticsStore:
                         num_citations,
                         json.dumps(policy_flags or []),
                         query_chars,
+                        user_id,
                     ),
                 )
                 conn.commit()
