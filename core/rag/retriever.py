@@ -387,32 +387,100 @@ def debug_query(query: str, k: int = 5, domain: str = "finance") -> None:
     print(f"Total chunks: {meta.get('num_chunks', len(idx.get('entries', [])))}")
     print(f"Chunk size: {meta.get('chunk_size', 'unknown')}")
     
-    hits, conf = kb_retrieve_with_confidence(query, k=k, rerank=True)
-    
+    hits, conf = kb_retrieve_with_confidence(query, k=k, rerank=True, domain=domain)
+
     print(f"\nOverall confidence: {conf:.4f}")
     print(f"\nTop {len(hits)} results:")
     print("-" * 60)
-    
+
     for i, h in enumerate(hits, 1):
         print(f"\n{i}. [{h['score']:.4f}] {h['title']}")
         snippet = h['content'][:200].replace('\n', ' ')
         print(f"   Snippet: {snippet}...")
-    
+
     print(f"\n{'='*60}\n")
 
 
-# CLI entry point for rebuild
+def index_info(domain: str = "finance") -> None:
+    """Print index metadata and per-file chunk counts for a domain."""
+    print(f"\n{'='*60}")
+    print(f"KB INDEX INFO [Domain: {domain}]")
+    print(f"{'='*60}")
+    idx = _load_index(domain=domain)
+    meta = idx.get("meta", {})
+    entries = idx.get("entries", [])
+    print(f"Index path: {_get_index_path(domain)}")
+    print(f"Embedding backend: {meta.get('embed_backend', 'unknown')}")
+    print(f"Vector dimension: {meta.get('dim', 'unknown')}")
+    print(f"Documents: {meta.get('num_docs', 'unknown')}")
+    print(f"Chunks: {meta.get('num_chunks', len(entries))}")
+    print(f"Chunk size/overlap: {meta.get('chunk_size', '?')}/{meta.get('chunk_overlap', '?')}")
+    files = sorted(set(e.get("title", "") for e in entries))
+    print(f"\nSource files ({len(files)}):")
+    for f in files:
+        count = sum(1 for e in entries if e.get("title") == f)
+        print(f"  - {f}: {count} chunks")
+    print(f"{'='*60}\n")
+
+
+_TEST_QUERIES: Dict[str, List[str]] = {
+    "finance": [
+        "how to build an emergency fund",
+        "credit card debt payoff strategies",
+        "retirement planning basics",
+        "budgeting for beginners",
+    ],
+    "healthcare": [
+        "managing chronic conditions",
+        "when to see a doctor",
+        "preventive care checklist",
+        "medication management tips",
+    ],
+}
+
+
+def run_test_suite(domain: str = "finance") -> None:
+    """Run canned queries against a domain's index and report confidence spread."""
+    queries = _TEST_QUERIES.get(domain, _TEST_QUERIES["finance"])
+    print(f"\n{'='*60}")
+    print(f"RETRIEVAL TEST SUITE [Domain: {domain}]")
+    print(f"{'='*60}")
+    confs = []
+    for q in queries:
+        hits, conf = kb_retrieve_with_confidence(q, k=3, rerank=True, domain=domain)
+        confs.append(conf)
+        top = hits[0]["title"] if hits else "NO HITS"
+        print(f"  [{conf:.3f}] {q}  ->  {top}")
+    avg = sum(confs) / len(confs)
+    print("-" * 60)
+    print(f"Average confidence: {avg:.4f}")
+    if avg >= 0.4:
+        print(f"Retrieval looks healthy. Suggested threshold: {max(0.3, avg - 0.15):.2f}-{avg:.2f}")
+    else:
+        print("Low confidence — consider rebuilding with real embeddings:")
+        print(f"  python -m core.rag.retriever rebuild {domain} ollama:nomic-embed-text")
+    print(f"{'='*60}\n")
+
+
+# CLI entry point
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "rebuild":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "rebuild":
         domain = sys.argv[2] if len(sys.argv) > 2 else "finance"
         backend = sys.argv[3] if len(sys.argv) > 3 else None
         rebuild_index(domain=domain, embed_backend=backend)
-    elif len(sys.argv) > 1 and sys.argv[1] == "query":
+    elif cmd == "query":
         domain = sys.argv[2] if len(sys.argv) > 2 else "finance"
-        q = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else "how to save battery"
+        q = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else "how to build an emergency fund"
         debug_query(q, domain=domain)
+    elif cmd == "info":
+        index_info(sys.argv[2] if len(sys.argv) > 2 else "finance")
+    elif cmd == "test":
+        run_test_suite(sys.argv[2] if len(sys.argv) > 2 else "finance")
     else:
         print("Usage:")
         print("  python -m core.rag.retriever rebuild [domain] [backend]")
         print("  python -m core.rag.retriever query [domain] <your query>")
+        print("  python -m core.rag.retriever info [domain]")
+        print("  python -m core.rag.retriever test [domain]")

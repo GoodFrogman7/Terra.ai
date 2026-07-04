@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Syntax check
-        run: python -m compileall apps core tools debug_kb_query.py -q
+        run: python -m compileall apps core tools -q
 
       - name: Run tests
         run: pytest tests -q

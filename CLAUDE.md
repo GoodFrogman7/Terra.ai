@@ -39,26 +39,24 @@ python -m core.rag.retriever rebuild finance ollama:nomic-embed-text   # explici
 # Query a domain's KB index directly (debugging retrieval/confidence)
 python -m core.rag.retriever query finance "how to build an emergency fund"
 
-# Legacy/general debug CLI (operates on default KB_DIR/data/kb, not the per-domain dirs) —
-# note: the legacy data/kb/ directory was removed along with the pixel domain, so this CLI
-# needs KB_DIR pointed at a real directory (or files added under data/kb/) before it will work.
-python debug_kb_query.py "your query"
-python debug_kb_query.py --rebuild ollama:nomic-embed-text
-python debug_kb_query.py --info
-python debug_kb_query.py --test
+# Inspect a domain's index (backend, dims, per-file chunk counts)
+python -m core.rag.retriever info healthcare
+
+# Run canned retrieval queries against a domain and report confidence spread
+python -m core.rag.retriever test finance
 
 # Generate synthetic KB content for a domain
 python tools/generate_finance_kb.py
 python tools/generate_healthcare_kb.py
 ```
 
-There is no configured lint/format/test tooling (no pytest suite, no linter config) — verify changes by exercising the API/UI directly (see `/verify` skill) or via the retriever debug commands above.
+Run the test suite with `pytest tests -q` (deps in `requirements-dev.txt`; no network/Ollama needed — CI runs the same). There is still no linter/formatter config — match existing formatting by hand. For behavior not covered by tests, verify by exercising the API/UI directly (see `/verify` skill) or via the retriever debug commands above.
 
 ### Optional environment variables
 - `TAVILY_API_KEY` — enables web search fallback (without it, web search returns empty results and the agent falls back to KB-no-answer / general-knowledge LLM answer).
 - `OLLAMA_HOST` — defaults to `http://localhost:11434`; needed for any `ollama:*` summarizer or embedding backend.
 - `EMBED_BACKEND` — `hash` (default, no dependencies) or `ollama:<model>` (e.g. `ollama:nomic-embed-text`). The index must be rebuilt when this changes; retrieval always re-embeds queries using whatever backend the *loaded index* was built with (`meta.embed_backend`), not necessarily the current env var.
-- `KB_DIR` / `INDEX_DIR` — legacy single-domain paths (used by `/upload` and `/reindex` API endpoints, and `debug_kb_query.py`). Per-domain paths come from `config/domains.json` instead.
+- `KB_DIR` / `INDEX_DIR` — legacy single-domain paths (used by `/upload` and `/reindex` only when no `domain` is given). Per-domain paths come from `config/domains.json` instead.
 - `MEMORY_DB_PATH` — SQLite path for chat/memory store (default `data/memory/memory.db`).
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — when BOTH set, auth mode turns on: all API routes require a Supabase JWT (`Authorization: Bearer`), data is scoped per user, and the UI shows a login screen. When unset, single-user "local" mode (no auth) — this is what CI and fresh clones get. Auth logic lives in `core/auth/supabase_auth.py`; the pre-multi-tenancy SQLite data is auto-migrated to user_id "local" on first open.
 - `ANALYTICS_DB_PATH` — SQLite path for the analytics store (default `data/memory/analytics.db`).
@@ -89,7 +87,7 @@ Key behaviors baked into `nodes.py` worth knowing before touching it:
 
 ### Multi-domain KB (`config/domains.json`)
 
-Two domains — `finance`, `healthcare` — each with its own KB directory (`data/kb_finance`, etc.) and its own vector index (`data/index_finance/index.json`, etc.), fully isolated. `core/rag/retriever.py` resolves domain -> paths via `_load_domain_config()`. The `domain` field flows from the API request all the way through graph state into `kb_retrieve`. There's also a legacy non-domain-scoped `KB_DIR`/`INDEX_DIR` pair used only by the `/upload` and `/reindex` API endpoints and `debug_kb_query.py` — don't conflate the two path schemes.
+Two domains — `finance`, `healthcare` — each with its own KB directory (`data/kb_finance`, etc.) and its own vector index (`data/index_finance/index.json`, etc.), fully isolated. `core/rag/retriever.py` resolves domain -> paths via `_load_domain_config()`. The `domain` field flows from the API request all the way through graph state into `kb_retrieve`. There's also a legacy non-domain-scoped `KB_DIR`/`INDEX_DIR` pair used only by `/upload` and `/reindex` when called without a `domain` — don't conflate the two path schemes.
 
 ### RAG retrieval (`core/rag/retriever.py`)
 
