@@ -82,6 +82,59 @@ def test_domain_reindex(client: TestClient):
     assert body["ok"] and body["domain"] == "healthcare" and body["indexed_docs"] > 0
 
 
+def test_chat_overrides_do_not_leak_into_environ(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """embed_backend/kb_threshold are request-scoped state, never process env."""
+    import os
+    monkeypatch.delenv("EMBED_BACKEND", raising=False)
+    monkeypatch.delenv("KB_CONFIDENCE_THRESHOLD", raising=False)
+    r = client.post(
+        "/chat",
+        json={
+            "message": "how do I build an emergency fund",
+            "domain": "finance",
+            "web_enabled": False,
+            "kb_threshold": 0.31,
+            "embed_backend": "ollama:nomic-embed-text",
+            "summarizer_model": "none",
+        },
+    )
+    assert r.status_code == 200
+    assert "EMBED_BACKEND" not in os.environ
+    assert "KB_CONFIDENCE_THRESHOLD" not in os.environ
+
+
+def _sse_events(text: str) -> list:
+    return [json.loads(l[5:]) for l in text.splitlines() if l.startswith("data:")]
+
+
+def test_chat_stream_kb_answer_contract(client: TestClient):
+    r = client.get(
+        "/chat_stream",
+        params={
+            "message": "how do I build an emergency fund",
+            "domain": "finance",
+            "web_enabled": "false",
+            "kb_threshold": "0.05",
+            "embed_backend": "hash",
+        },
+    )
+    events = _sse_events(r.text)
+    done = events[-1]
+    assert done["done"] and done["source"] == "kb" and done["citations"]
+    answer = "".join(e.get("delta", "") for e in events[:-1])
+    assert answer.strip()
+
+
+def test_chat_stream_rejects_invalid_embed_backend(client: TestClient):
+    """Invalid backend must produce the SSE error envelope, not mutate the env."""
+    import os
+    r = client.get("/chat_stream", params={"message": "hi", "domain": "finance", "embed_backend": "rm -rf /"})
+    events = _sse_events(r.text)
+    assert "ValueError" in events[0]["delta"]
+    assert "api_error" in events[-1]["policy_flags"]
+    assert os.environ.get("EMBED_BACKEND") != "rm -rf /"
+
+
 def test_chat_kb_answer_contract(client: TestClient):
     body = client.post(
         "/chat",

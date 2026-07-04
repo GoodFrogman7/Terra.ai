@@ -180,16 +180,12 @@ def reindex(domain: Optional[str] = None, user: Dict[str, Any] = Depends(get_cur
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user)):
-    if req.kb_threshold is not None:
-        os.environ["KB_CONFIDENCE_THRESHOLD"] = str(req.kb_threshold)
-    if req.embed_backend:
-        os.environ["EMBED_BACKEND"] = req.embed_backend
-
     state = {
         "query": req.message,
         "messages": [m.model_dump() for m in req.messages],
         "user_id": user["user_id"],
         "domain": req.domain,
+        "embed_backend": req.embed_backend,
         "force_research": bool(req.research_only),
         "rerank": bool(req.rerank),
         "KB_THRESHOLD": float(req.kb_threshold) if req.kb_threshold is not None else 0.45,
@@ -225,10 +221,8 @@ async def chat_stream(
     def sse(payload: dict) -> str:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
     try:
-        if kb_threshold is not None:
-            os.environ["KB_CONFIDENCE_THRESHOLD"] = str(kb_threshold)
-        if embed_backend:
-            os.environ["EMBED_BACKEND"] = embed_backend
+        if embed_backend and embed_backend not in ALLOWED_EMBED_BACKENDS:
+            raise ValueError(f"embed_backend must be one of {ALLOWED_EMBED_BACKENDS}")
 
         messages = []
         if history:
@@ -242,6 +236,7 @@ async def chat_stream(
             "messages": messages,
             "user_id": user["user_id"],
             "domain": domain,  # NEW: pass domain to agent
+            "embed_backend": embed_backend,
             "force_research": bool(research_only),
             "rerank": bool(rerank),
             "KB_THRESHOLD": float(kb_threshold) if kb_threshold is not None else 0.45,
@@ -266,8 +261,11 @@ async def chat_stream(
         return StreamingResponse(gen(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     except Exception as e:
+        # Capture eagerly: the generator runs after the except block exits,
+        # by which point Python has already unbound `e`
+        err_delta = f"⚠️ {type(e).__name__}: {str(e)}"
         def gen_err():
-            yield sse({"delta": f"⚠️ {type(e).__name__}: {str(e)}"})
+            yield sse({"delta": err_delta})
             yield sse({"done": True, "citations": [], "policy_flags": ["api_error"]})
         return StreamingResponse(gen_err(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

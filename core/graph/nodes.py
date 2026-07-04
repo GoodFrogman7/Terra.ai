@@ -21,7 +21,7 @@ def _cache_key(state: Dict[str, Any]) -> str:
     sel = {
         "q": state.get("query",""),
         "hist": state.get("messages", [])[-4:],
-        "embed": os.getenv("EMBED_BACKEND","hash"),
+        "embed": state.get("embed_backend") or os.getenv("EMBED_BACKEND","hash"),
         "rerank": bool(state.get("rerank", False)),
         "kb_t": state.get("KB_THRESHOLD", 0.62),
         "web_enabled": bool(state.get("web_enabled", True)),
@@ -224,7 +224,12 @@ def kb_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("force_research"):
         return {**state, "kb_hits": [], "kb_conf": 0.0}
     domain = state.get("domain", "finance")
-    hits, conf = kb_retrieve_with_confidence(state["query"], rerank=bool(state.get("rerank", False)), domain=domain)
+    hits, conf = kb_retrieve_with_confidence(
+        state["query"],
+        rerank=bool(state.get("rerank", False)),
+        domain=domain,
+        embed_backend=state.get("embed_backend"),
+    )
     return {**state, "kb_hits": hits, "kb_conf": conf}
 
 def answer_from_kb(state: Dict[str, Any]) -> Dict[str, Any]:

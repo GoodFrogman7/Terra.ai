@@ -110,9 +110,9 @@ Two domains — `finance`, `healthcare` — each with its own KB directory (`dat
 ### API surface (`apps/api/main.py`)
 
 - `POST /chat` / `GET /chat_stream` (SSE) — both build the same graph `state` dict and invoke `agent.ainvoke(state)`; keep their state-construction logic in sync when adding new fields.
-- `POST /upload` — validates extension and 10MB size cap, saves under `KB_DIR` with a UUID filename, then immediately rebuilds the (legacy, non-domain-scoped) index.
-- `POST /reindex` — rebuilds the legacy index on demand.
-- Request-time overrides of `embed_backend`/`kb_threshold` are pushed into `os.environ`, which affects retrieval globally for the process (not request-scoped) — be aware of this when changing concurrent-request behavior.
+- `POST /upload` — validates extension and 10MB size cap; with an optional `domain` form field it saves into that domain's KB dir and rebuilds that domain's index, otherwise it uses the legacy `KB_DIR`/`INDEX_DIR` pair. Filenames get a short UUID prefix plus the sanitized original name.
+- `POST /reindex` — rebuilds a domain's index via `?domain=`, or the legacy index when omitted.
+- Request-time overrides of `embed_backend`/`kb_threshold` are request-scoped: they travel through the graph `state` dict (`embed_backend`, `KB_THRESHOLD`), never `os.environ`. The `embed_backend` override only takes effect if a missing index must be auto-built mid-request — query embedding always follows the loaded index's `meta.embed_backend`.
 - `summarizer_model` and `embed_backend` are both validated against explicit allowlists (`ALLOWED_SUMMARIZER_MODELS`, `ALLOWED_EMBED_BACKENDS`) in `ChatRequest.model_post_init`.
 
 ### Safety

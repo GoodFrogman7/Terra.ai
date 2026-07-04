@@ -270,12 +270,12 @@ def build_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, 
     return out
 
 
-def _load_index(index_path: Optional[str] = None, domain: str = "finance") -> dict:
-    """Load index from disk, or build if not exists."""
+def _load_index(index_path: Optional[str] = None, domain: str = "finance", embed_backend: Optional[str] = None) -> dict:
+    """Load index from disk, or build if not exists (embed_backend only affects a fresh build)."""
     index_path = index_path or _get_index_path(domain)
     p = Path(index_path)
     if not p.exists():
-        return build_index(domain=domain)
+        return build_index(domain=domain, embed_backend=embed_backend)
     return json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -312,20 +312,22 @@ def _rerank(query: str, hits: List[Dict], enabled: bool) -> List[Dict]:
     return sorted(hits, key=score, reverse=True)
 
 
-def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, domain: str = "finance") -> Tuple[List[Dict], float]:
+def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, domain: str = "finance", embed_backend: Optional[str] = None) -> Tuple[List[Dict], float]:
     """
     Retrieve top-k KB chunks for a query.
-    
+
     Args:
         query: Search query
         k: Number of results to return
         rerank: Whether to apply keyword reranking
         domain: Domain name (finance, healthcare)
-    
+        embed_backend: Backend used only if the index must be built on the fly;
+            queries are always embedded with the loaded index's own backend
+
     Returns:
         (list of hits, confidence score)
     """
-    idx = _load_index(domain=domain)
+    idx = _load_index(domain=domain, embed_backend=embed_backend)
     
     # Use the same backend that was used to build the index
     index_backend = idx.get("meta", {}).get("embed_backend", "hash")
