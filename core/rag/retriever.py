@@ -8,6 +8,7 @@ KB Retriever Module
 import os
 import json
 import re
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
@@ -63,11 +64,18 @@ def _tokenize(text: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9]+", (text or "").lower())
 
 
+def _token_bucket(tok: str, dim: int) -> int:
+    """Deterministic token->bucket mapping. Built-in hash() is salted per
+    process (PYTHONHASHSEED), which would make index vectors incompatible
+    with query vectors from any other process."""
+    return int.from_bytes(hashlib.md5(tok.encode("utf-8")).digest()[:8], "big") % dim
+
+
 def _hash_embed(text: str, dim: int = 512) -> List[float]:
     """Hash-based bag-of-words embedding (fast, no dependencies)."""
     vec = [0.0] * dim
     for tok in _tokenize(text):
-        vec[hash(tok) % dim] += 1.0
+        vec[_token_bucket(tok, dim)] += 1.0
     norm = (sum(v * v for v in vec) ** 0.5) or 1.0
     return [v / norm for v in vec]
 
