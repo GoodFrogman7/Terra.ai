@@ -17,7 +17,6 @@ def search_youtube(query: str, max_results: int = 6) -> List[Dict]:
         return []
     
     try:
-        # Add "pixel" context to ensure relevant results for ambiguous queries
         search_query = query
         search_url = f"https://www.youtube.com/results?search_query={quote_plus(search_query)}"
         
@@ -147,13 +146,6 @@ def get_youtube_suggestions(query: str, max_results: int = 6) -> str:
     # Clean query and add context for better results
     clean_query = re.sub(r'^(how to|what is|who is|explain|tell me about)\s+', '', query, flags=re.IGNORECASE)
     
-    # Add "google pixel" context if query seems related to Pixel features
-    pixel_keywords = ['camera', 'battery', 'screen', 'photo', 'night sight', 'magic eraser', 
-                      'settings', 'android', 'pixel', 'phone', 'call', 'wifi', 'bluetooth']
-    query_lower = clean_query.lower()
-    if any(kw in query_lower for kw in pixel_keywords) and 'pixel' not in query_lower:
-        clean_query = f"google pixel {clean_query}"
-    
     videos = search_youtube(clean_query, max_results)
     
     if not videos:
@@ -188,13 +180,6 @@ def get_youtube_suggestions_structured(query: str, max_results: int = 6) -> List
     # Clean query and add context for better results
     clean_query = re.sub(r'^(how to|what is|who is|explain|tell me about)\s+', '', query, flags=re.IGNORECASE)
     
-    # Add "google pixel" context if query seems related to Pixel features
-    pixel_keywords = ['camera', 'battery', 'screen', 'photo', 'night sight', 'magic eraser', 
-                      'settings', 'android', 'pixel', 'phone', 'call', 'wifi', 'bluetooth']
-    query_lower = clean_query.lower()
-    if any(kw in query_lower for kw in pixel_keywords) and 'pixel' not in query_lower:
-        clean_query = f"google pixel {clean_query}"
-    
     videos = search_youtube(clean_query, max_results)
     
     if not videos:
@@ -216,6 +201,6 @@ def get_youtube_suggestions_structured(query: str, max_results: int = 6) -> List
 
 if __name__ == "__main__":
     # Test
-    result = search_youtube("google pixel battery tips", 6)
+    result = search_youtube("personal finance budgeting tips", 6)
     for v in result:
         print(f"{v['title']}\n  {v['url']}\n  {v['thumbnail']}\n")

@@ -81,19 +81,18 @@ def _format_timestamp(ts: str) -> str:
     except Exception:
         return ""
 
-st.set_page_config(page_title="Customer Support Copilot v4", layout="wide")
+st.set_page_config(page_title="Groundtruth AI", layout="wide")
 
 # Initialize domain state
 if "last_domain" not in st.session_state:
-    st.session_state.last_domain = "pixel"
+    st.session_state.last_domain = "finance"
 
 # Dynamic title based on agent mode
 agent_titles = {
-    "pixel": "Customer Support Copilot v4 (KB-first → Web fallback)",
-    "finance": "Personal Finance Assistant (KB-first → Web fallback)",
-    "healthcare": "Healthcare Assistant (KB-first → Web fallback)"
+    "finance": "Groundtruth AI — Finance Assistant (KB-first → Web fallback)",
+    "healthcare": "Groundtruth AI — Healthcare Assistant (KB-first → Web fallback)"
 }
-current_domain = st.session_state.get("last_domain", "pixel")
+current_domain = st.session_state.get("last_domain", "finance")
 st.title(agent_titles[current_domain])
 
 
@@ -322,13 +321,12 @@ with st.sidebar:
     
     agent_mode = st.selectbox(
         "Select Agent",
-        ["Pixel Copilot", "Finance Assistant", "Healthcare Assistant"],
+        ["Finance Assistant", "Healthcare Assistant"],
         key="agent_mode"
     )
-    
+
     # Map to domain names
     domain_map = {
-        "Pixel Copilot": "pixel",
         "Finance Assistant": "finance",
         "Healthcare Assistant": "healthcare"
     }
@@ -421,6 +419,8 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
         r.raise_for_status()
         answer_chunks = []
         youtube_suggestions = []
+        citations = []
+        source = "unknown"
         for line in r.iter_lines(decode_unicode=True):
             if line and line.startswith("data:"):
                 payload = json.loads(line[6:])
@@ -428,9 +428,30 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
                     answer_chunks.append(payload["delta"])
                 if payload.get("done"):
                     youtube_suggestions = payload.get("youtube_suggestions", [])
+                    citations = payload.get("citations", [])
+                    source = payload.get("source", "unknown")
                     break
         full_answer = "".join(answer_chunks)
         st.markdown(full_answer)
+
+        # Trust indicator: flag answers that aren't grounded in KB/web sources
+        if source in ("general_knowledge", "none"):
+            st.caption("⚠️ Not grounded in a verified source — model general knowledge only.")
+
+        # Render "Sources" block for grounded (KB/web) answers
+        if citations:
+            with st.expander(f"📚 Sources ({len(citations)})"):
+                for c in citations:
+                    title = c.get("title", "source")
+                    url = c.get("url", "")
+                    snippet = c.get("snippet", "")
+                    score = c.get("score", 0.0)
+                    if url:
+                        st.markdown(f"**[{title}]({url})** · relevance {score:.2f}")
+                    else:
+                        st.markdown(f"**{title}** · relevance {score:.2f}")
+                    if snippet:
+                        st.caption(snippet)
 
         # Render YouTube video cards if available
         if youtube_suggestions:
@@ -491,7 +512,7 @@ if prompt:
                 web_enabled=web_enabled,
                 youtube_enabled=youtube_enabled,
                 summarizer_model=summarizer_model,
-                domain=st.session_state.get("last_domain", "pixel"),
+                domain=st.session_state.get("last_domain", "finance"),
             )
             st.session_state.chat_history.append({"role": "assistant", "content": ans})
             

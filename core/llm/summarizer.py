@@ -132,9 +132,9 @@ def _heuristic_summarize(query: str, chunks: List[Dict]) -> str:
 
 
 # ------------------------------------------------------------
-# PIXEL COPILOT SYSTEM PROMPT
+# ASSISTANT SYSTEM PROMPT
 # ------------------------------------------------------------
-PIXEL_COPILOT_SYSTEM = """You are a knowledgeable assistant. Answer questions directly and confidently.
+ASSISTANT_SYSTEM_PROMPT = """You are a knowledgeable assistant. Answer questions directly and confidently.
 
 CRITICAL RULES:
 1. Give the FINAL ANSWER only. NO thinking, planning, or reasoning out loud.
@@ -175,7 +175,7 @@ def summarize(query: str, chunks: List[Dict], mode: str = "kb", model: Optional[
         # Extract the core question without context prefixes
         clean_query = re.sub(r'^Context:.*?Current question:\s*', '', query, flags=re.IGNORECASE)
         
-        system_prompt = PIXEL_COPILOT_SYSTEM.format(mode=source_label)
+        system_prompt = ASSISTANT_SYSTEM_PROMPT.format(mode=source_label)
         
         prompt = f"""{system_prompt}
 

@@ -8,9 +8,9 @@ Usage:
     python debug_kb_query.py --info
 
 Examples:
-    python debug_kb_query.py "how to save battery on pixel"
-    python debug_kb_query.py "adaptive battery"
-    python debug_kb_query.py "dual SIM setup"
+    python debug_kb_query.py "how to build an emergency fund"
+    python debug_kb_query.py "managing chronic conditions"
+    python debug_kb_query.py "retirement planning basics"
     python debug_kb_query.py --rebuild ollama:nomic-embed-text
     python debug_kb_query.py --rebuild hash
 """
@@ -157,13 +157,13 @@ def do_rebuild(backend: str = None):
 def run_test_suite():
     """Run a suite of test queries."""
     test_queries = [
-        "how to save battery on pixel",
-        "adaptive battery",
-        "dual SIM setup on pixel",
-        "Night Sight camera",
-        "Circle to Search",
-        "Call Screen",
-        "factory reset pixel",
+        "how to build an emergency fund",
+        "credit card debt payoff strategies",
+        "retirement planning basics",
+        "managing chronic conditions",
+        "when to see a doctor",
+        "preventive care checklist",
+        "budgeting for beginners",
     ]
     
     print("\n" + "=" * 60)

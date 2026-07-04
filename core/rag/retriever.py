@@ -3,7 +3,7 @@ KB Retriever Module
 - Loads and indexes KB files from domain-specific directories
 - Supports hash and ollama embedding backends
 - Improved chunking with overlap for better semantic matching
-- Multi-domain support (pixel, finance, healthcare)
+- Multi-domain support (finance, healthcare)
 """
 import os
 import json
@@ -19,22 +19,21 @@ def _load_domain_config() -> dict:
         return json.loads(config_path.read_text(encoding="utf-8"))
     # Fallback if config doesn't exist
     return {
-        "pixel": {"kb_dir": "data/kb_pixel", "index_dir": "data/index_pixel"},
         "finance": {"kb_dir": "data/kb_finance", "index_dir": "data/index_finance"},
         "healthcare": {"kb_dir": "data/kb_healthcare", "index_dir": "data/index_healthcare"}
     }
 
-def _get_kb_dir(domain: str = "pixel") -> str:
+def _get_kb_dir(domain: str = "finance") -> str:
     """Get KB directory for a specific domain."""
     config = _load_domain_config()
     return config.get(domain, {}).get("kb_dir", f"data/kb_{domain}")
 
-def _get_index_dir(domain: str = "pixel") -> str:
+def _get_index_dir(domain: str = "finance") -> str:
     """Get index directory for a specific domain."""
     config = _load_domain_config()
     return config.get(domain, {}).get("index_dir", f"data/index_{domain}")
 
-def _get_index_path(domain: str = "pixel") -> str:
+def _get_index_path(domain: str = "finance") -> str:
     """Get index file path for a specific domain."""
     return os.path.join(_get_index_dir(domain), "index.json")
 
@@ -189,7 +188,7 @@ def _chunk(text: str, size: int = CHUNK_SIZE) -> List[str]:
     return _smart_chunk(text, size, CHUNK_OVERLAP)
 
 
-def build_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, embed_backend: Optional[str] = None, domain: str = "pixel") -> dict:
+def build_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, embed_backend: Optional[str] = None, domain: str = "finance") -> dict:
     """
     Build KB index from all files in kb_dir.
     
@@ -197,7 +196,7 @@ def build_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, 
         kb_dir: Directory containing KB files (default: domain-specific)
         index_path: Where to save the index (default: domain-specific)
         embed_backend: Embedding backend to use (default: from env)
-        domain: Domain name (pixel, finance, healthcare)
+        domain: Domain name (finance, healthcare)
     
     Returns:
         Index dictionary with metadata and entries
@@ -263,7 +262,7 @@ def build_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, 
     return out
 
 
-def _load_index(index_path: Optional[str] = None, domain: str = "pixel") -> dict:
+def _load_index(index_path: Optional[str] = None, domain: str = "finance") -> dict:
     """Load index from disk, or build if not exists."""
     index_path = index_path or _get_index_path(domain)
     p = Path(index_path)
@@ -272,7 +271,7 @@ def _load_index(index_path: Optional[str] = None, domain: str = "pixel") -> dict
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def clear_index(index_path: Optional[str] = None, domain: str = "pixel") -> bool:
+def clear_index(index_path: Optional[str] = None, domain: str = "finance") -> bool:
     """Delete the existing index file."""
     index_path = index_path or _get_index_path(domain)
     p = Path(index_path)
@@ -283,7 +282,7 @@ def clear_index(index_path: Optional[str] = None, domain: str = "pixel") -> bool
     return False
 
 
-def rebuild_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, embed_backend: Optional[str] = None, domain: str = "pixel") -> dict:
+def rebuild_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None, embed_backend: Optional[str] = None, domain: str = "finance") -> dict:
     """Clear and rebuild the KB index."""
     clear_index(domain=domain)
     return build_index(kb_dir, index_path, embed_backend, domain)
@@ -305,7 +304,7 @@ def _rerank(query: str, hits: List[Dict], enabled: bool) -> List[Dict]:
     return sorted(hits, key=score, reverse=True)
 
 
-def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, domain: str = "pixel") -> Tuple[List[Dict], float]:
+def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, domain: str = "finance") -> Tuple[List[Dict], float]:
     """
     Retrieve top-k KB chunks for a query.
     
@@ -313,7 +312,7 @@ def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, do
         query: Search query
         k: Number of results to return
         rerank: Whether to apply keyword reranking
-        domain: Domain name (pixel, finance, healthcare)
+        domain: Domain name (finance, healthcare)
     
     Returns:
         (list of hits, confidence score)
@@ -363,7 +362,7 @@ def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, do
     return hits, conf
 
 
-def debug_query(query: str, k: int = 5, domain: str = "pixel") -> None:
+def debug_query(query: str, k: int = 5, domain: str = "finance") -> None:
     """
     Debug utility to test KB retrieval.
     Prints top-k results with scores and snippets.
@@ -396,11 +395,11 @@ def debug_query(query: str, k: int = 5, domain: str = "pixel") -> None:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "rebuild":
-        domain = sys.argv[2] if len(sys.argv) > 2 else "pixel"
+        domain = sys.argv[2] if len(sys.argv) > 2 else "finance"
         backend = sys.argv[3] if len(sys.argv) > 3 else None
         rebuild_index(domain=domain, embed_backend=backend)
     elif len(sys.argv) > 1 and sys.argv[1] == "query":
-        domain = sys.argv[2] if len(sys.argv) > 2 else "pixel"
+        domain = sys.argv[2] if len(sys.argv) > 2 else "finance"
         q = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else "how to save battery"
         debug_query(q, domain=domain)
     else:

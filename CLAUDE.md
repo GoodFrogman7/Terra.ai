@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A multi-domain customer support copilot (Pixel device support, Finance, Healthcare) built as a FastAPI backend + Streamlit UI, using a LangGraph-based agent pipeline: KB retrieval first, web search fallback, with local Ollama LLMs (or a heuristic fallback) for summarization — no cloud LLM dependency required.
+**Groundtruth AI** — a citation-grounded customer support copilot for regulated industries (Finance, Healthcare), built as a FastAPI backend + Streamlit UI, using a LangGraph-based agent pipeline: KB retrieval first, web search fallback, with local Ollama LLMs (or a heuristic fallback) for summarization — no cloud LLM dependency required. The local-LLM-only architecture is a deliberate positioning choice: customer data never leaves the deployment, which matters for finance/healthcare buyers.
 
-**Never mix knowledge between domains.** Pixel, Finance, and Healthcare each have fully isolated KB dirs and vector indexes (see [Multi-domain KB](#multi-domain-kb-configdomainsjson)) — a query for one domain must never retrieve from, or be answered using, another domain's KB content.
+Previously scoped as a 3-domain demo including Google Pixel device support; that domain was dropped (IP/employer-ownership reasons) and the product now focuses exclusively on Finance + Healthcare.
+
+**Never mix knowledge between domains.** Finance and Healthcare each have fully isolated KB dirs and vector indexes (see [Multi-domain KB](#multi-domain-kb-configdomainsjson)) — a query for one domain must never retrieve from, or be answered using, another domain's KB content.
 
 ## Coding conventions
 
@@ -30,14 +32,16 @@ uvicorn apps.pixel_copilot_api.main:app --reload --port 8000
 $env:COPILOT_API_BASE = "http://127.0.0.1:8000"
 streamlit run apps\pixel_copilot_ui\app.py
 
-# Rebuild a domain's KB index (domain: pixel | finance | healthcare)
-python -m core.rag.retriever rebuild pixel
-python -m core.rag.retriever rebuild pixel ollama:nomic-embed-text   # explicit embed backend
+# Rebuild a domain's KB index (domain: finance | healthcare)
+python -m core.rag.retriever rebuild finance
+python -m core.rag.retriever rebuild finance ollama:nomic-embed-text   # explicit embed backend
 
 # Query a domain's KB index directly (debugging retrieval/confidence)
-python -m core.rag.retriever query pixel "how to save battery"
+python -m core.rag.retriever query finance "how to build an emergency fund"
 
-# Legacy/general debug CLI (operates on default KB_DIR/data/kb, not the per-domain dirs)
+# Legacy/general debug CLI (operates on default KB_DIR/data/kb, not the per-domain dirs) —
+# note: the legacy data/kb/ directory was removed along with the pixel domain, so this CLI
+# needs KB_DIR pointed at a real directory (or files added under data/kb/) before it will work.
 python debug_kb_query.py "your query"
 python debug_kb_query.py --rebuild ollama:nomic-embed-text
 python debug_kb_query.py --info
@@ -79,10 +83,11 @@ Key behaviors baked into `nodes.py` worth knowing before touching it:
 - **General-knowledge LLM fallback**: when KB and web both fail, `_is_general_knowledge_question` + `_general_knowledge_answer` let the local Ollama model answer from its own knowledge (labeled `**Source: Model Knowledge**`) rather than returning a hard "I don't know".
 - **Intent-adjusted KB threshold** (`_apply_intent_thresholds`): sensitive queries (factory reset/wipe) raise the confidence bar; "how to"/"enable"/"turn on" queries lower it.
 - Per-node answer caching (`_ANSWER_CACHE`) exists but is disabled via `_CACHE_ENABLED = False` — intentionally, to always get fresh LLM output.
+- **Citations/trust tagging**: every payload dict carries `citations` (built by `_build_citations()` from `kb_hits`/`web_snippets`, whichever is in scope) and a `source` marker (`"kb"`, `"web"`, `"general_knowledge"`, `"youtube"`, or `"none"`). The `source` field is what lets the UI distinguish grounded answers from ungrounded ones — treat it as load-bearing for the trust story, not cosmetic. When adding new answer paths, always populate both fields rather than defaulting to empty/`"unknown"`.
 
 ### Multi-domain KB (`config/domains.json`)
 
-Three domains — `pixel`, `finance`, `healthcare` — each with its own KB directory (`data/kb_pixel`, etc.) and its own vector index (`data/index_pixel/index.json`, etc.), fully isolated. `core/rag/retriever.py` resolves domain -> paths via `_load_domain_config()`. The `domain` field flows from the API request all the way through graph state into `kb_retrieve`. There's also a legacy non-domain-scoped `KB_DIR`/`INDEX_DIR` pair used only by the `/upload` and `/reindex` API endpoints and `debug_kb_query.py` — don't conflate the two path schemes.
+Two domains — `finance`, `healthcare` — each with its own KB directory (`data/kb_finance`, etc.) and its own vector index (`data/index_finance/index.json`, etc.), fully isolated. `core/rag/retriever.py` resolves domain -> paths via `_load_domain_config()`. The `domain` field flows from the API request all the way through graph state into `kb_retrieve`. There's also a legacy non-domain-scoped `KB_DIR`/`INDEX_DIR` pair used only by the `/upload` and `/reindex` API endpoints and `debug_kb_query.py` — don't conflate the two path schemes.
 
 ### RAG retrieval (`core/rag/retriever.py`)
 
@@ -121,10 +126,10 @@ Do not refactor working retrieval logic (`core/rag/retriever.py` chunking/embedd
 ## Testing changes
 
 There's no automated test suite — after every change, verify manually:
-- Run the API locally and exercise `/chat` (or `/chat_stream`) for all three domains (pixel, finance, healthcare) to confirm no cross-domain leakage.
+- Run the API locally and exercise `/chat` (or `/chat_stream`) for both domains (finance, healthcare) to confirm no cross-domain leakage.
 - Test `/upload` with a real file and confirm reindex picks it up.
 - Test memory endpoints (`/memory/*`) — chat creation, message add, retrieval.
-- Confirm citations/sources still appear correctly in KB and web-research answers.
+- Confirm `citations` and `source` are populated correctly in KB and web-research answers, and that `source` correctly falls back to `"general_knowledge"`/`"none"` when nothing is grounded.
 
 ## Rules
 

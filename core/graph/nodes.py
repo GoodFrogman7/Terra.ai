@@ -93,8 +93,8 @@ def _resolve_video_query(query: str, messages: List[Dict]) -> str:
         history_topic = _extract_topic_from_history(messages)
         if history_topic:
             return f"{history_topic} tutorial"
-        # Default to Pixel-related trending content
-        return "google pixel tips and tricks"
+        # Default to generic finance/wellness explainer content
+        return "personal finance and wellness tips"
     
     return query
 
@@ -185,6 +185,20 @@ def _inject_memory_context(state: Dict[str, Any]) -> Dict[str, Any]:
     return state
 
 
+def _build_citations(items: List[Dict[str, Any]], max_items: int = 4) -> List[Dict[str, Any]]:
+    """Build citation objects (title/url/snippet/score) from KB hits or web snippets."""
+    citations = []
+    for item in items[:max_items]:
+        content = (item.get("content") or "").strip()
+        citations.append({
+            "title": item.get("title", "source"),
+            "url": item.get("url", ""),
+            "snippet": content[:200],
+            "score": round(float(item.get("score", 0.0)), 3),
+        })
+    return citations
+
+
 def intake(state: Dict[str, Any]) -> Dict[str, Any]:
     # NEW: Inject memory context (additive only)
     state = _inject_memory_context(state)
@@ -211,7 +225,7 @@ def intake(state: Dict[str, Any]) -> Dict[str, Any]:
 def kb_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("force_research"):
         return {**state, "kb_hits": [], "kb_conf": 0.0}
-    domain = state.get("domain", "pixel")
+    domain = state.get("domain", "finance")
     hits, conf = kb_retrieve_with_confidence(state["query"], rerank=bool(state.get("rerank", False)), domain=domain)
     return {**state, "kb_hits": hits, "kb_conf": conf}
 
@@ -229,19 +243,19 @@ def answer_from_kb(state: Dict[str, Any]) -> Dict[str, Any]:
         yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
             answer = f"Here are some video suggestions for you:{yt_html}"
-            payload = {"answer": answer, "citations": [], "youtube_suggestions": yt_data}
+            payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             if _CACHE_ENABLED:
                 _ANSWER_CACHE[cache_k] = payload
             return {**state, **payload}
-    
+
     hits: List[Dict[str, Any]] = state.get("kb_hits", [])
     top = hits[:3]
     model = state.get("summarizer_model", "none")
-    
+
     # STEP 1: Generate the main answer FIRST (this is the priority)
     answer = summarize(state["query"], top, mode="kb", model=model)
     answer = f"**(KB)** {answer}"
-    
+
     # STEP 2: Append YouTube AFTER answer is ready (non-blocking, auxiliary only)
     youtube_suggestions = []
     if state.get("youtube_enabled", False):
@@ -250,8 +264,8 @@ def answer_from_kb(state: Dict[str, Any]) -> Dict[str, Any]:
             answer += yt_html
         if yt_data:
             youtube_suggestions = yt_data
-    
-    payload = {"answer": answer, "citations": [], "youtube_suggestions": youtube_suggestions}
+
+    payload = {"answer": answer, "citations": _build_citations(top), "source": "kb", "youtube_suggestions": youtube_suggestions}
     if _CACHE_ENABLED:
         _ANSWER_CACHE[cache_k] = payload
     return {**state, **payload}
@@ -268,19 +282,19 @@ def kb_no_answer(state: Dict[str, Any]) -> Dict[str, Any]:
         yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
             answer = f"Here are some video suggestions for you:{yt_html}"
-            payload = {"answer": answer, "citations": [], "youtube_suggestions": yt_data}
+            payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             return {**state, **payload}
-    
+
     # Try general knowledge fallback for common questions
     if _is_general_knowledge_question(state["query"]):
         fallback = _general_knowledge_answer(state["query"], model)
         if fallback:
             msg = f"**(Model)** {fallback}\n\n**Source: Model Knowledge**"
-            payload = {"answer": msg, "citations": [], "youtube_suggestions": []}
+            payload = {"answer": msg, "citations": [], "source": "general_knowledge", "youtube_suggestions": []}
             return {**state, **payload}
-    
+
     msg = "I don't have enough verified information to answer that accurately."
-    payload = {"answer": msg, "citations": [], "youtube_suggestions": []}
+    payload = {"answer": msg, "citations": [], "source": "none", "youtube_suggestions": []}
     return {**state, **payload}
 
 def research_plan(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -303,28 +317,32 @@ def synthesize_research(state: Dict[str, Any]) -> Dict[str, Any]:
         yt_html, yt_data = _get_youtube_nonblocking(video_query, max_results=6, timeout=5.0)
         if yt_data:
             answer = f"Here are some video suggestions for you:{yt_html}"
-            payload = {"answer": answer, "citations": [], "youtube_suggestions": yt_data}
+            payload = {"answer": answer, "citations": [], "source": "youtube", "youtube_suggestions": yt_data}
             if _CACHE_ENABLED:
                 _ANSWER_CACHE[cache_k] = payload
             return {**state, **payload}
-    
+
     snips: List[Dict[str, Any]] = state.get("web_snippets", [])
     top = [{"title": s.get("title","web"), "url": s.get("url",""), "content": s.get("snippet",""), "score": state.get("web_conf",0.0)} for s in snips[:4]]
     model = state.get("summarizer_model", "none")
-    
+
     # STEP 1: Generate the main answer FIRST (this is the priority)
     answer = summarize(state["query"], top, mode="web", model=model)
-    
+
     # STEP 2: If web search failed but this is a general knowledge question, use LLM fallback
+    citations: List[Dict[str, Any]] = []
+    source = "web"
     if "I don't have enough" in answer and _is_general_knowledge_question(state["query"]):
         fallback = _general_knowledge_answer(state["query"], model)
         if fallback:
             answer = f"**(Model)** {fallback}\n\n**Source: Model Knowledge**"
+            source = "general_knowledge"
         else:
             answer = f"**(Web)** {answer}"
     else:
         answer = f"**(Web)** {answer}"
-    
+        citations = _build_citations(top)
+
     # STEP 3: Append YouTube AFTER answer is ready (non-blocking, auxiliary only)
     youtube_suggestions = []
     if state.get("youtube_enabled", False):
@@ -333,8 +351,8 @@ def synthesize_research(state: Dict[str, Any]) -> Dict[str, Any]:
             answer += yt_html
         if yt_data:
             youtube_suggestions = yt_data
-    
-    payload = {"answer": answer, "citations": [], "youtube_suggestions": youtube_suggestions}
+
+    payload = {"answer": answer, "citations": citations, "source": source, "youtube_suggestions": youtube_suggestions}
     if _CACHE_ENABLED:
         _ANSWER_CACHE[cache_k] = payload
     return {**state, **payload}

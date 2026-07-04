@@ -10,7 +10,7 @@ load_dotenv()
 
 from core.graph.graph import compiled as agent
 
-app = FastAPI(title="Pixel Copilot API v4")
+app = FastAPI(title="Groundtruth AI API")
 
 # Include memory routes (additive - does not modify existing behavior)
 from apps.pixel_copilot_api.memory_routes import router as memory_router
@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = Field(None, max_length=128)
     message: str = Field(..., min_length=1, max_length=10_000)
     messages: List[Message] = Field(default_factory=list)
-    domain: Literal["pixel", "finance", "healthcare"] = "pixel"
+    domain: Literal["finance", "healthcare"] = "finance"
     kb_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
     research_only: Optional[bool] = None
     rerank: Optional[bool] = None
@@ -57,6 +57,7 @@ class YouTubeSuggestion(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     citations: List[Dict[str, Any]] = Field(default_factory=list)
+    source: str = "unknown"
     policy_flags: List[str] = Field(default_factory=list)
     youtube_suggestions: List[YouTubeSuggestion] = Field(default_factory=list)
 
@@ -115,6 +116,7 @@ async def chat(req: ChatRequest):
     return ChatResponse(
         answer=final.get("answer",""),
         citations=final.get("citations",[]),
+        source=final.get("source","unknown"),
         policy_flags=final.get("policy_flags",[]),
         youtube_suggestions=final.get("youtube_suggestions",[]),
     )
@@ -124,7 +126,7 @@ async def chat_stream(
     request: Request,
     user_id: Optional[str] = None,
     message: str = "",
-    domain: str = "pixel",  # NEW: pixel, finance, healthcare
+    domain: str = "finance",  # finance, healthcare
     kb_threshold: Optional[float] = None,
     research_only: Optional[bool] = None,
     rerank: Optional[bool] = None,
@@ -164,6 +166,7 @@ async def chat_stream(
         final = await agent.ainvoke(state)
         full = final.get("answer","")
         citations = final.get("citations",[])
+        source = final.get("source","unknown")
         policy_flags = final.get("policy_flags",[])
         youtube_suggestions = final.get("youtube_suggestions",[])
 
@@ -172,7 +175,7 @@ async def chat_stream(
             for i in range(0, len(full), step):
                 yield sse({"delta": full[i:i+step]})
                 time.sleep(0.02)
-            yield sse({"done": True, "citations": citations, "policy_flags": policy_flags, "youtube_suggestions": youtube_suggestions})
+            yield sse({"done": True, "citations": citations, "source": source, "policy_flags": policy_flags, "youtube_suggestions": youtube_suggestions})
         return StreamingResponse(gen(), media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     except Exception as e:

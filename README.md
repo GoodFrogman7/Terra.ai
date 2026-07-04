@@ -1,5 +1,8 @@
-# Customer Support Copilot v4 (Ollama-only LLMs)
+# Groundtruth AI (Ollama-only LLMs)
 
+A grounded, citation-backed AI support assistant for regulated industries (finance, healthcare) — runs entirely on local/free LLMs (Ollama), so customer data never leaves your infrastructure.
+
+- KB-first retrieval with confidence-based routing to web search, then general-model fallback — every answer is tagged with its source (KB / web / general knowledge) so ungrounded answers are never presented as verified fact
 - Web Search toggle (KB-only mode when disabled)
 - LLM summarization via **Ollama** (llama3.1:8b, mistral:7b, gemma3:4b) or **none** (heuristic fallback)
 - Upload to KB (PDF/MD/TXT/CSV/JSON). Auto-index on first query.
@@ -36,3 +39,4 @@ streamlit run apps\pixel_copilot_ui\app.py
   - ollama:mistral:7b
   - ollama:gemma3:4b
 - Embeddings can also come from Ollama (qwen3-embedding:8b, etc.) via the embedding backend selector.
+- Domains: **Finance** and **Healthcare**, each with an isolated knowledge base and vector index — domains never share KB content.
