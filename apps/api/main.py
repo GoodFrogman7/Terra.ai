@@ -1,11 +1,11 @@
-from fastapi import FastAPI, Request, UploadFile, File, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
-import os, json, time, shutil, uuid
+import os, json, time, shutil, uuid, re
 from pathlib import Path
 from dotenv import load_dotenv
-from core.rag.retriever import build_index, INDEX_PATH
+from core.rag.retriever import build_index, INDEX_PATH, _load_domain_config, _get_kb_dir
 load_dotenv()
 
 from core.graph.graph import compiled as agent
@@ -122,14 +122,34 @@ def get_config():
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 
+def _resolve_upload_domain(domain: Optional[str]) -> Optional[str]:
+    """Validate a requested domain against config/domains.json; None means legacy KB_DIR."""
+    if not domain:
+        return None
+    if domain not in _load_domain_config():
+        raise ValueError(f"Unknown domain '{domain}'")
+    return domain
+
 @app.post("/upload")
-async def upload(file: UploadFile = File(...), user: Dict[str, Any] = Depends(get_current_user)):
+async def upload(
+    file: UploadFile = File(...),
+    domain: Optional[str] = Form(None),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
     suffix_ok = {".md",".markdown",".txt",".csv",".json",".pdf"}
     ext = Path(file.filename).suffix.lower()
     if ext not in suffix_ok:
         return {"ok": False, "msg": f"Unsupported extension {ext}"}
-    safe_name = f"{uuid.uuid4().hex}{ext}"
-    target = KB_ROOT / safe_name
+    try:
+        dom = _resolve_upload_domain(domain)
+    except ValueError as e:
+        return {"ok": False, "msg": str(e)}
+    kb_root = Path(_get_kb_dir(dom)).resolve() if dom else KB_ROOT
+    kb_root.mkdir(parents=True, exist_ok=True)
+    # Keep a sanitized original name after a UUID prefix so citations stay readable
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(file.filename).stem)[:80] or "upload"
+    safe_name = f"{uuid.uuid4().hex[:8]}_{stem}{ext}"
+    target = kb_root / safe_name
     size = 0
     with target.open("wb") as f:
         while chunk := file.file.read(8192):
@@ -139,14 +159,24 @@ async def upload(file: UploadFile = File(...), user: Dict[str, Any] = Depends(ge
                 return {"ok": False, "msg": "File exceeds 10MB limit"}
             f.write(chunk)
 
-    # NEW: build/refresh index immediately
-    idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
-    return {"ok": True, "path": str(target), "indexed_docs": len(idx.get("entries", []))}
+    # Build/refresh the matching index immediately
+    if dom:
+        idx = build_index(domain=dom)
+    else:
+        idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
+    return {"ok": True, "path": str(target), "indexed_docs": len(idx.get("entries", [])), "domain": dom}
 
 @app.post("/reindex")
-def reindex(user: Dict[str, Any] = Depends(get_current_user)):
-    idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
-    return {"ok": True, "indexed_docs": len(idx.get("entries", []))}
+def reindex(domain: Optional[str] = None, user: Dict[str, Any] = Depends(get_current_user)):
+    try:
+        dom = _resolve_upload_domain(domain)
+    except ValueError as e:
+        return {"ok": False, "msg": str(e)}
+    if dom:
+        idx = build_index(domain=dom)
+    else:
+        idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
+    return {"ok": True, "indexed_docs": len(idx.get("entries", [])), "domain": dom}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user)):

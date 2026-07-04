@@ -487,14 +487,18 @@ with st.sidebar:
     show_graph = st.checkbox("Show agent graph", value=True)
 
     st.markdown("---")
-    st.subheader("Upload to KB")
+    st.subheader(f"Upload to KB ({_domain_display})")
     up = st.file_uploader("Add files", type=["pdf","md","markdown","txt","csv","json"])
     if up is not None:
         files = {"file": (up.name, up.getvalue())}
         try:
-            r = requests.post(f"{API_BASE}/upload", files=files, headers=_auth_headers(), timeout=120)
-            if r.ok and r.json().get("ok"):
-                st.success(f"Uploaded: {up.name}")
+            r = requests.post(f"{API_BASE}/upload", files=files, data={"domain": current_domain},
+                              headers=_auth_headers(), timeout=120)
+            body = r.json() if r.ok else {}
+            if body.get("ok"):
+                st.success(f"Uploaded: {up.name} — {_domain_display} KB reindexed ({body.get('indexed_docs')} chunks)")
+            else:
+                st.error(f"Upload failed: {body.get('msg', r.text)}")
         except Exception as e:
             st.error(f"Upload error: {e}")
 
