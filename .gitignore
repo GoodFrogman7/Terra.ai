@@ -3,3 +3,13 @@
 __pycache__/
 *.pyc
 .claude/
+
+# Personal/legal strategy docs — never commit
+YC_APPLICATION_DRAFT.md
+INNODATA_IP_RELEASE_EMAIL.md
+
+# Runtime SQLite state (chat/memory/analytics) — machine-local, not versioned
+data/memory/*.db
+data/memory/*.db-journal
+data/memory/*.db-wal
+data/memory/*.db-shm
