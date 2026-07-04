@@ -17,34 +17,12 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Syntax check
         run: python -m compileall apps core tools debug_kb_query.py -q
 
-      - name: Import smoke test
-        run: |
-          python -c "from apps.api.main import app; print('API OK')"
-          python -c "from core.graph.graph import compiled; print('Graph OK')"
-          python -c "from core.analytics.store import get_analytics_store; print('Analytics OK')"
-
-      - name: Pipeline smoke test (KB retrieval + citations)
-        run: |
-          python - <<'EOF'
-          import asyncio
-          from core.graph.graph import compiled as agent
-
-          async def main():
-              state = {
-                  "query": "how do I build an emergency fund",
-                  "messages": [], "domain": "finance",
-                  "force_research": False, "rerank": True, "KB_THRESHOLD": 0.05,
-                  "web_enabled": False, "youtube_enabled": False, "summarizer_model": "none",
-              }
-              r = await agent.ainvoke(state)
-              assert r.get("source") == "kb", f"expected kb, got {r.get('source')}"
-              assert r.get("citations"), "citations must be populated for KB answers"
-              print("Pipeline smoke test OK:", len(r["citations"]), "citations")
-
-          asyncio.run(main())
-          EOF
+      - name: Run tests
+        run: pytest tests -q
