@@ -1,0 +1,65 @@
+# Production stack for an invite-only Terra.ai demo on a single VPS.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Only Caddy is exposed publicly (ports 80/443, automatic Let's Encrypt TLS for
+# $DEMO_DOMAIN). The Streamlit UI makes all API calls server-side, so the API and
+# Ollama stay on the internal docker network with no host port mappings.
+# See DEPLOY.md for the full runbook.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DEMO_DOMAIN: ${DEMO_DOMAIN:?Set DEMO_DOMAIN in .env (e.g. demo.example.com)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # TLS certificates — persist across restarts
+      - caddy_config:/config
+    depends_on:
+      - ui
+
+  ui:
+    build: .
+    restart: unless-stopped
+    command: streamlit run apps/ui/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    environment:
+      # Internal-only: the Streamlit *server* calls the API; the browser never does.
+      COPILOT_API_BASE: http://api:8000
+    depends_on:
+      - api
+    # No ports: reachable only via caddy on the internal network.
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      DEMO_INVITE_CODE: ${DEMO_INVITE_CODE:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-}
+    volumes:
+      - app_data:/app/data    # vector indexes + memory/analytics SQLite DBs
+    depends_on:
+      - ollama
+    # No ports: internal only.
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_models:/root/.ollama   # pulled models — persist across restarts
+    # No ports: internal only.
+
+volumes:
+  ollama_models:
+  app_data:
+  caddy_data:
+  caddy_config:

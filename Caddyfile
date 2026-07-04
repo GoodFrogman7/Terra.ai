@@ -1,0 +1,11 @@
+# Caddy config for the Terra.ai demo.
+# DEMO_DOMAIN comes from the environment (set in .env, injected by docker-compose.prod.yml).
+# Caddy obtains and renews a Let's Encrypt certificate for this domain automatically.
+
+{$DEMO_DOMAIN} {
+	encode gzip
+
+	# Streamlit needs WebSocket support; Caddy's reverse_proxy upgrades
+	# WebSocket connections automatically — no extra config required.
+	reverse_proxy ui:8501
+}
