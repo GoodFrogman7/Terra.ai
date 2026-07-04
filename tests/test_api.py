@@ -41,6 +41,49 @@ def test_auth_status_local_mode(client: TestClient):
     assert client.get("/auth/status").json() == {"auth_enabled": False}
 
 
+@pytest.fixture()
+def invite_gated_auth_mode(monkeypatch: pytest.MonkeyPatch):
+    """Auth mode with an invite code required. example.invalid guarantees any
+    accidental Supabase call fails fast instead of hitting the network."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.invalid")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "fake")
+    monkeypatch.setenv("DEMO_INVITE_CODE", "sekrit")
+
+
+def test_signup_rejects_wrong_invite_code(invite_gated_auth_mode):
+    client = TestClient(app)
+    r = client.post("/auth/signup", json={"email": "a@b.co", "password": "hunter22", "invite_code": "wrong"})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Invalid or missing invite code"
+
+
+def test_signup_rejects_missing_invite_code(invite_gated_auth_mode):
+    client = TestClient(app)
+    r = client.post("/auth/signup", json={"email": "a@b.co", "password": "hunter22"})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Invalid or missing invite code"
+
+
+def test_signup_local_mode_ignores_invite_code(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DEMO_INVITE_CODE", "sekrit")
+    r = client.post("/auth/signup", json={"email": "a@b.co", "password": "hunter22"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "local_mode": True}
+
+
+def test_signup_auth_mode_without_invite_gate(monkeypatch: pytest.MonkeyPatch):
+    """DEMO_INVITE_CODE unset: signup proceeds to sign_up (mocked) even without invite_code."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.invalid")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "fake")
+    monkeypatch.delenv("DEMO_INVITE_CODE", raising=False)
+    import apps.api.main as main_mod
+    monkeypatch.setattr(main_mod, "sign_up", lambda email, password: {"id": "x"})
+    client = TestClient(app)
+    r = client.post("/auth/signup", json={"email": "a@b.co", "password": "hunter22"})
+    assert r.status_code == 200
+    assert r.json() == {"id": "x"}
+
+
 def test_config_lists_domains_and_allowlists(client: TestClient):
     cfg = client.get("/config").json()
     assert set(cfg["domains"]) == {"finance", "healthcare"}
@@ -133,6 +176,41 @@ def test_chat_stream_rejects_invalid_embed_backend(client: TestClient):
     assert "ValueError" in events[0]["delta"]
     assert "api_error" in events[-1]["policy_flags"]
     assert os.environ.get("EMBED_BACKEND") != "rm -rf /"
+
+
+def test_rate_limit_429_after_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from apps.api.rate_limit import reset_rate_limiter
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "3")
+    reset_rate_limiter()
+    payload = {"message": "hi", "domain": "finance", "web_enabled": False,
+               "kb_threshold": 0.99, "summarizer_model": "none"}
+    for _ in range(3):
+        assert client.post("/chat", json=payload).status_code == 200
+    r = client.post("/chat", json=payload)
+    assert r.status_code == 429
+    assert r.json()["detail"] == "Rate limit exceeded, try again shortly"
+    reset_rate_limiter()
+
+
+def test_rate_limit_disabled_when_zero(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from apps.api.rate_limit import reset_rate_limiter
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
+    reset_rate_limiter()
+    payload = {"message": "hi", "domain": "finance", "web_enabled": False,
+               "kb_threshold": 0.99, "summarizer_model": "none"}
+    for _ in range(10):
+        assert client.post("/chat", json=payload).status_code == 200
+
+
+def test_rate_limit_covers_auth_endpoints(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from apps.api.rate_limit import reset_rate_limiter
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    reset_rate_limiter()
+    creds = {"email": "a@b.co", "password": "hunter22"}
+    assert client.post("/auth/login", json=creds).status_code == 200
+    assert client.post("/auth/login", json=creds).status_code == 200
+    assert client.post("/auth/login", json=creds).status_code == 429
+    reset_rate_limiter()
 
 
 def test_chat_kb_answer_contract(client: TestClient):

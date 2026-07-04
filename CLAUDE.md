@@ -59,6 +59,8 @@ Run the test suite with `pytest tests -q` (deps in `requirements-dev.txt`; no ne
 - `KB_DIR` / `INDEX_DIR` — legacy single-domain paths (used by `/upload` and `/reindex` only when no `domain` is given). Per-domain paths come from `config/domains.json` instead.
 - `MEMORY_DB_PATH` — SQLite path for chat/memory store (default `data/memory/memory.db`).
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — when BOTH set, auth mode turns on: all API routes require a Supabase JWT (`Authorization: Bearer`), data is scoped per user, and the UI shows a login screen. When unset, single-user "local" mode (no auth) — this is what CI and fresh clones get. Auth logic lives in `core/auth/supabase_auth.py`; the pre-multi-tenancy SQLite data is auto-migrated to user_id "local" on first open.
+- `DEMO_INVITE_CODE` — when set (and auth mode is on), `POST /auth/signup` requires a matching `invite_code` field or is rejected with 403 before any Supabase call; unset (or local mode) = signup behaves as before.
+- `RATE_LIMIT_PER_MINUTE` — in-memory sliding-window rate limit on `/chat`, `/chat_stream`, `/upload`, `/auth/signup`, `/auth/login` (keyed by user_id in auth mode, client IP otherwise; 429 on exceed). Default 60; `0` disables. Logic in `apps/api/rate_limit.py`.
 - `ANALYTICS_DB_PATH` — SQLite path for the analytics store (default `data/memory/analytics.db`).
 - `ALLOWED_WEB_DOMAINS` — comma-separated allowlist restricting Tavily results; empty = allow all.
 - `MEMORY_DEBUG=true` — verbose logging for memory injection/store code paths.

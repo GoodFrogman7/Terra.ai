@@ -37,8 +37,11 @@ def _api_login(email: str, password: str) -> dict:
     raise RuntimeError(detail)
 
 
-def _api_signup(email: str, password: str) -> dict:
-    r = requests.post(f"{API_BASE}/auth/signup", json={"email": email, "password": password}, timeout=20)
+def _api_signup(email: str, password: str, invite_code: str = "") -> dict:
+    payload = {"email": email, "password": password}
+    if invite_code:
+        payload["invite_code"] = invite_code
+    r = requests.post(f"{API_BASE}/auth/signup", json=payload, timeout=20)
     if r.ok:
         return r.json()
     detail = r.json().get("detail", "Signup failed") if r.content else "Signup failed"
@@ -164,9 +167,14 @@ if _api_auth_status() and not st.session_state.get("access_token"):
         with st.form("signup_form"):
             email_s = st.text_input("Email", key="signup_email")
             password_s = st.text_input("Password (min 6 chars)", type="password", key="signup_password")
+            invite_code_s = st.text_input(
+                "Invite code",
+                key="signup_invite_code",
+                help="Required only on invite-only deployments; leave blank otherwise.",
+            )
             if st.form_submit_button("Create account", use_container_width=True):
                 try:
-                    result = _api_signup(email_s, password_s)
+                    result = _api_signup(email_s, password_s, invite_code_s)
                     token = (result.get("session") or {}).get("access_token") or result.get("access_token")
                     if token:
                         st.session_state.access_token = token

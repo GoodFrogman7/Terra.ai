@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
@@ -18,6 +18,7 @@ app.include_router(memory_router)
 
 from core.analytics.store import get_analytics_store
 from core.auth.supabase_auth import get_current_user, auth_enabled, sign_up, sign_in
+from apps.api.rate_limit import rate_limit_by_ip, rate_limit_by_user
 
 def _log_interaction(final: Dict[str, Any], domain: str, query: str, user_id: str = "local") -> None:
     """Record interaction metrics; never raises."""
@@ -34,19 +35,23 @@ def _log_interaction(final: Dict[str, Any], domain: str, query: str, user_id: st
 class AuthCredentials(BaseModel):
     email: str = Field(..., min_length=3, max_length=320)
     password: str = Field(..., min_length=6, max_length=128)
+    invite_code: Optional[str] = Field(None, max_length=64)
 
 @app.get("/auth/status")
 def auth_status():
     """Whether the deployment requires login (Supabase configured) or runs in local mode."""
     return {"auth_enabled": auth_enabled()}
 
-@app.post("/auth/signup")
+@app.post("/auth/signup", dependencies=[Depends(rate_limit_by_ip)])
 def auth_signup(creds: AuthCredentials):
     if not auth_enabled():
         return {"ok": True, "local_mode": True}
+    required_code = os.getenv("DEMO_INVITE_CODE", "")
+    if required_code and creds.invite_code != required_code:
+        raise HTTPException(status_code=403, detail="Invalid or missing invite code")
     return sign_up(creds.email, creds.password)
 
-@app.post("/auth/login")
+@app.post("/auth/login", dependencies=[Depends(rate_limit_by_ip)])
 def auth_login(creds: AuthCredentials):
     if not auth_enabled():
         return {"ok": True, "local_mode": True}
@@ -130,7 +135,7 @@ def _resolve_upload_domain(domain: Optional[str]) -> Optional[str]:
         raise ValueError(f"Unknown domain '{domain}'")
     return domain
 
-@app.post("/upload")
+@app.post("/upload", dependencies=[Depends(rate_limit_by_user)])
 async def upload(
     file: UploadFile = File(...),
     domain: Optional[str] = Form(None),
@@ -178,7 +183,7 @@ def reindex(domain: Optional[str] = None, user: Dict[str, Any] = Depends(get_cur
         idx = build_index(os.environ["KB_DIR"], os.path.join(os.environ["INDEX_DIR"], "index.json"))
     return {"ok": True, "indexed_docs": len(idx.get("entries", [])), "domain": dom}
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(rate_limit_by_user)])
 async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user)):
     state = {
         "query": req.message,
@@ -203,7 +208,7 @@ async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user
         youtube_suggestions=final.get("youtube_suggestions",[]),
     )
 
-@app.get("/chat_stream")
+@app.get("/chat_stream", dependencies=[Depends(rate_limit_by_user)])
 async def chat_stream(
     request: Request,
     message: str = "",
