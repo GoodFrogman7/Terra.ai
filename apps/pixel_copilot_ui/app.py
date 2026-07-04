@@ -81,7 +81,7 @@ def _format_timestamp(ts: str) -> str:
     except Exception:
         return ""
 
-st.set_page_config(page_title="Groundtruth AI", layout="wide")
+st.set_page_config(page_title="Terra.ai", layout="wide")
 
 # Initialize domain state
 if "last_domain" not in st.session_state:
@@ -89,8 +89,8 @@ if "last_domain" not in st.session_state:
 
 # Dynamic title based on agent mode
 agent_titles = {
-    "finance": "Groundtruth AI — Finance Assistant (KB-first → Web fallback)",
-    "healthcare": "Groundtruth AI — Healthcare Assistant (KB-first → Web fallback)"
+    "finance": "Terra.ai — Finance Assistant (KB-first → Web fallback)",
+    "healthcare": "Terra.ai — Healthcare Assistant (KB-first → Web fallback)"
 }
 current_domain = st.session_state.get("last_domain", "finance")
 st.title(agent_titles[current_domain])

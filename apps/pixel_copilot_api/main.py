@@ -10,7 +10,7 @@ load_dotenv()
 
 from core.graph.graph import compiled as agent
 
-app = FastAPI(title="Groundtruth AI API")
+app = FastAPI(title="Terra.ai API")
 
 # Include memory routes (additive - does not modify existing behavior)
 from apps.pixel_copilot_api.memory_routes import router as memory_router

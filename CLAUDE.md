@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Groundtruth AI** — a citation-grounded customer support copilot for regulated industries (Finance, Healthcare), built as a FastAPI backend + Streamlit UI, using a LangGraph-based agent pipeline: KB retrieval first, web search fallback, with local Ollama LLMs (or a heuristic fallback) for summarization — no cloud LLM dependency required. The local-LLM-only architecture is a deliberate positioning choice: customer data never leaves the deployment, which matters for finance/healthcare buyers.
+**Terra.ai** — a citation-grounded customer support copilot for regulated industries (Finance, Healthcare), built as a FastAPI backend + Streamlit UI, using a LangGraph-based agent pipeline: KB retrieval first, web search fallback, with local Ollama LLMs (or a heuristic fallback) for summarization — no cloud LLM dependency required. The local-LLM-only architecture is a deliberate positioning choice: customer data never leaves the deployment, which matters for finance/healthcare buyers.
 
 Previously scoped as a 3-domain demo including Google Pixel device support; that domain was dropped (IP/employer-ownership reasons) and the product now focuses exclusively on Finance + Healthcare.
 

@@ -1,4 +1,4 @@
-# Groundtruth AI (Ollama-only LLMs)
+# Terra.ai (Ollama-only LLMs)
 
 A grounded, citation-backed AI support assistant for regulated industries (finance, healthcare) — runs entirely on local/free LLMs (Ollama), so customer data never leaves your infrastructure.
 
