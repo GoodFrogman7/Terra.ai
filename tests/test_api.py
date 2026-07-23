@@ -102,6 +102,14 @@ def test_upload_rejects_unknown_domain(client: TestClient):
     assert not body["ok"] and "Unknown domain" in body["msg"]
 
 
+def test_upload_rejects_unreadable_pdf(client: TestClient):
+    body = client.post(
+        "/upload", files={"file": ("scanned_policy.pdf", b"not a valid PDF")}, data={"domain": "finance"}
+    ).json()
+    assert not body["ok"]
+    assert "extractable text" in body["msg"]
+
+
 def test_domain_upload_indexes_and_isolates(client: TestClient, finance_kb_restored: list):
     baseline = client.post("/reindex", params={"domain": "finance"}).json()["indexed_docs"]
 
@@ -228,3 +236,22 @@ def test_chat_kb_answer_contract(client: TestClient):
     assert body["citations"]
     assert body["answer"].strip()
     assert isinstance(body["policy_flags"], list)
+
+
+def test_chat_uses_safe_default_threshold_and_web_off(client: TestClient):
+    body = client.post(
+        "/chat",
+        json={"message": "how do I build an emergency fund", "domain": "finance", "summarizer_model": "none"},
+    ).json()
+    assert body["source"] == "kb"
+    assert body["citations"]
+
+
+def test_chat_defaults_to_strict_source_backed_answers(client: TestClient):
+    body = client.post(
+        "/chat",
+        json={"message": "What is the institution's wire transfer exception procedure?", "domain": "finance"},
+    ).json()
+    assert body["source"] == "none"
+    assert body["citations"] == []
+    assert body["answer"] == "I cannot verify that in the approved sources."

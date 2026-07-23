@@ -1,6 +1,12 @@
 # Terra.ai (Ollama-only LLMs)
 
-A grounded, citation-backed AI support assistant for regulated industries (finance, healthcare) — runs entirely on local/free LLMs (Ollama), so customer data never leaves your infrastructure.
+## Launch Direction
+
+Terra Policy Desk is the finance-first paid-pilot surface for this codebase: source-linked internal policy support for community banks and credit unions. The healthcare domain remains available for development, but it is not the launch offer. See [PRODUCT_VISION.md](PRODUCT_VISION.md), [ROADMAP.md](ROADMAP.md), and [SECURITY_AND_SCALE.md](SECURITY_AND_SCALE.md) before presenting this as a production service.
+
+Policy mode is strict by default: it returns selected wording from cited, approved sources and refuses when it cannot retrieve evidence. Research mode restores broader discovery controls, including YouTube suggestions and optional approved-web research; it is deliberately distinct from policy answers. External web research is disabled by default; when enabled, the question is sent to the configured research provider, and `ALLOWED_WEB_DOMAINS` should contain the customer-approved source hosts.
+
+A grounded, citation-backed AI support assistant for finance and healthcare. Local Ollama models are optional; any enabled web research sends the question to the configured research provider.
 
 - KB-first retrieval with confidence-based routing to web search, then general-model fallback — every answer is tagged with its source (KB / web / general knowledge) so ungrounded answers are never presented as verified fact
 - Web Search toggle (KB-only mode when disabled)
@@ -18,6 +24,8 @@ docker compose exec ollama ollama pull llama3.2
 docker compose exec ollama ollama pull nomic-embed-text
 ```
 UI at http://localhost:8501, API at http://localhost:8000. Optional: put `TAVILY_API_KEY=...` in a `.env` file to enable web-search fallback.
+
+Run verification with `pytest tests -q`. Run `python tools/run_pilot_evaluation.py` for the deterministic smoke corpus. The paid-pilot 100-case gate is documented in [PILOT_RELEASE_GATE.md](PILOT_RELEASE_GATE.md). The finance-first demo is enabled with `DEMO_MODE=true`.
 
 ## Run (Windows PowerShell)
 ```powershell

@@ -1,4 +1,5 @@
 .venv/
+.venv*/
 .env
 __pycache__/
 *.pyc
@@ -13,3 +14,7 @@ data/memory/*.db
 data/memory/*.db-journal
 data/memory/*.db-wal
 data/memory/*.db-shm
+
+# Generated pilot evaluation output; archive it with the customer engagement, not source code
+reports/
+.playwright-cli/
