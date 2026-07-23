@@ -1,0 +1,4 @@
+{"id":"emergency-fund-build","question":"How do I build an emergency fund?","domain":"finance","expected":"answer","expected_source_titles":["finance_emergency_fund.md"],"required_phrases":["automatic monthly transfers"]}
+{"id":"emergency-fund-size","question":"How much should I save in an emergency fund?","domain":"finance","expected":"answer","expected_source_titles":["finance_emergency_fund.md"],"required_phrases":["3-6 months"]}
+{"id":"unknown-wire-exception","question":"What is the institution's wire transfer exception procedure?","domain":"finance","expected":"abstain"}
+{"id":"cross-domain-medical","question":"When should I see a doctor about a fever?","domain":"finance","expected":"abstain"}

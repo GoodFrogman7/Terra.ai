@@ -12,6 +12,11 @@ import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+try:
+    from pypdf import PdfReader
+except ImportError:  # The API surfaces a clear upload error until dependencies are installed.
+    PdfReader = None
+
 # Domain configuration loader
 def _load_domain_config() -> dict:
     """Load domain configuration from config/domains.json"""
@@ -62,6 +67,21 @@ def _get_ollama_host() -> str:
 def _tokenize(text: str) -> List[str]:
     """Simple word tokenization for reranking."""
     return re.findall(r"[A-Za-z0-9]+", (text or "").lower())
+
+
+_QUERY_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "about", "be", "basic", "basics", "best",
+    "build", "by", "can", "could", "do", "does", "for", "from", "get", "give", "help",
+    "how", "i", "in", "is", "it", "learn", "make", "me", "my", "need", "of", "on",
+    "or", "please", "see", "should", "start", "tell", "that", "the", "their", "this", "tips",
+    "to", "use", "want", "was", "what", "when", "where", "which", "who", "why", "with",
+    "would", "you", "your",
+}
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    """Return terms suitable for checking that a hash retrieval is grounded."""
+    return {token for token in _tokenize(text) if len(token) > 1 and token not in _QUERY_STOP_WORDS}
 
 
 def _token_bucket(tok: str, dim: int) -> int:
@@ -116,8 +136,8 @@ def _cos(a: List[float], b: List[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
 
-def _load_text(path: Path) -> str:
-    """Load text content from a file."""
+def load_document_text(path: Path) -> str:
+    """Load extractable text from a supported document without inventing content."""
     suf = path.suffix.lower()
     if suf in {".md", ".markdown", ".txt", ".csv", ".json"}:
         try:
@@ -125,8 +145,19 @@ def _load_text(path: Path) -> str:
         except Exception:
             return ""
     if suf == ".pdf":
-        return f"(PDF uploaded: {path.name})"
+        if PdfReader is None:
+            return ""
+        try:
+            reader = PdfReader(str(path))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception:
+            return ""
     return ""
+
+
+def _load_text(path: Path) -> str:
+    """Backward-compatible internal alias for document text loading."""
+    return load_document_text(path)
 
 
 def _smart_chunk(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
@@ -296,20 +327,41 @@ def rebuild_index(kb_dir: Optional[str] = None, index_path: Optional[str] = None
     return build_index(kb_dir, index_path, embed_backend, domain)
 
 
+def _add_grounding_score(query: str, hit: Dict) -> Dict:
+    """Attach a relevance score that requires meaningful evidence, not hash collisions."""
+    query_terms = _meaningful_tokens(query)
+    document_terms = _meaningful_tokens(hit.get("content", ""))
+    overlap = query_terms & document_terms
+    coverage = len(overlap) / len(query_terms) if query_terms else 0.0
+    cosine = max(0.0, float(hit.get("score", 0.0)))
+
+    # Coverage is intentionally the dominant signal. Hash vectors can collide,
+    # so a high cosine without shared meaningful terms is not enough to ground an answer.
+    grounding_score = (0.60 * coverage) + (0.25 * min(1.0, len(overlap) / 2.0)) + (0.15 * cosine)
+    enriched = dict(hit)
+    enriched["cosine_score"] = cosine
+    enriched["keyword_overlap"] = len(overlap)
+    enriched["query_coverage"] = coverage
+    enriched["score"] = min(0.98, grounding_score)
+    return enriched
+
+
 def _rerank(query: str, hits: List[Dict], enabled: bool) -> List[Dict]:
-    """Rerank hits using keyword overlap boosting."""
-    if not enabled or not hits:
-        return hits
-    q_tokens = set(_tokenize(query))
-    
-    def score(h):
-        text = h.get("content", "")
-        toks = set(_tokenize(text))
-        overlap = len(q_tokens & toks)
-        # Combine embedding score (70%) with keyword overlap (30%)
-        return (h.get("score", 0.0) * 0.7) + (overlap * 0.03)
-    
-    return sorted(hits, key=score, reverse=True)
+    """Rank by evidence coverage when requested, retaining cosine order otherwise."""
+    if not hits:
+        return []
+    scored = [_add_grounding_score(query, hit) for hit in hits]
+    key = (lambda hit: hit["score"]) if enabled else (lambda hit: hit["cosine_score"])
+    return sorted(scored, key=key, reverse=True)
+
+
+def get_default_kb_threshold(domain: str = "finance", embed_backend: Optional[str] = None) -> float:
+    """Choose a conservative default calibrated to the active index backend."""
+    try:
+        backend = _load_index(domain=domain, embed_backend=embed_backend).get("meta", {}).get("embed_backend", "hash")
+    except Exception:
+        backend = embed_backend or _get_embed_backend()
+    return 0.42 if backend == "hash" else 0.55
 
 
 def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, domain: str = "finance", embed_backend: Optional[str] = None) -> Tuple[List[Dict], float]:
@@ -346,7 +398,7 @@ def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, do
     
     # Sort by similarity
     scored.sort(key=lambda t: t[1], reverse=True)
-    top_pairs = scored[:max(k, 8)]
+    top_pairs = scored[:max(k * 4, 16)]
     
     # Format hits
     hits = [
@@ -359,15 +411,21 @@ def kb_retrieve_with_confidence(query: str, k: int = 5, rerank: bool = False, do
         for e, s in top_pairs
     ]
     
-    # Apply reranking
-    hits = _rerank(query, hits, rerank)[:k]
+    # Hash embeddings are only a candidate generator. Require lexical evidence
+    # before returning a hit so accidental bucket collisions cannot look grounded.
+    hits = _rerank(query, hits, rerank)
+    if index_backend == "hash":
+        query_terms = _meaningful_tokens(query)
+        min_overlap = 1 if len(query_terms) <= 1 else 2
+        hits = [hit for hit in hits if hit["keyword_overlap"] >= min_overlap]
+    hits = hits[:k]
     
     if not hits:
         return [], 0.0
     
-    # Calculate confidence as average of top scores
-    conf = sum(max(0.0, h["score"]) for h in hits) / len(hits)
-    conf = min(0.98, max(0.0, conf))
+    # The strongest grounded hit is a useful route signal; averaging unrelated
+    # candidates previously made clearly relevant queries look low-confidence.
+    conf = min(0.98, max(0.0, float(hits[0]["score"])))
     
     return hits, conf
 

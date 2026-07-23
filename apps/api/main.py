@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any, Literal
 import os, json, time, shutil, uuid, re
 from pathlib import Path
 from dotenv import load_dotenv
-from core.rag.retriever import build_index, INDEX_PATH, _load_domain_config, _get_kb_dir
+from core.rag.retriever import build_index, INDEX_PATH, _load_domain_config, _get_kb_dir, load_document_text
 load_dotenv()
 
 from core.graph.graph import compiled as agent
@@ -81,6 +81,7 @@ class ChatRequest(BaseModel):
     web_enabled: Optional[bool] = None
     youtube_enabled: Optional[bool] = None
     summarizer_model: Optional[str] = Field(None, max_length=64)
+    strict_mode: Optional[bool] = None
 
     def model_post_init(self, __context):
         if self.embed_backend and self.embed_backend not in ALLOWED_EMBED_BACKENDS:
@@ -110,7 +111,10 @@ def healthz():
 def analytics_summary(domain: Optional[str] = None, user: Dict[str, Any] = Depends(get_current_user)):
     """Aggregate resolution/grounding metrics for the dashboard."""
     store = get_analytics_store()
-    return {"summary": store.summary(domain=domain), "recent": store.recent(limit=50)}
+    return {
+        "summary": store.summary(domain=domain, user_id=user["user_id"]),
+        "recent": store.recent(limit=50, user_id=user["user_id"]),
+    }
 
 @app.get("/config")
 def get_config():
@@ -164,6 +168,10 @@ async def upload(
                 return {"ok": False, "msg": "File exceeds 10MB limit"}
             f.write(chunk)
 
+    if ext == ".pdf" and not load_document_text(target).strip():
+        target.unlink(missing_ok=True)
+        return {"ok": False, "msg": "PDF has no extractable text or could not be read"}
+
     # Build/refresh the matching index immediately
     if dom:
         idx = build_index(domain=dom)
@@ -192,11 +200,12 @@ async def chat(req: ChatRequest, user: Dict[str, Any] = Depends(get_current_user
         "domain": req.domain,
         "embed_backend": req.embed_backend,
         "force_research": bool(req.research_only),
-        "rerank": bool(req.rerank),
-        "KB_THRESHOLD": float(req.kb_threshold) if req.kb_threshold is not None else 0.45,
-        "web_enabled": True if req.web_enabled is None else bool(req.web_enabled),
+        "rerank": True if req.rerank is None else bool(req.rerank),
+        "KB_THRESHOLD": float(req.kb_threshold) if req.kb_threshold is not None else None,
+        "web_enabled": False if req.web_enabled is None else bool(req.web_enabled),
         "youtube_enabled": bool(req.youtube_enabled) if req.youtube_enabled else False,
         "summarizer_model": (req.summarizer_model or "none"),
+        "strict_mode": True if req.strict_mode is None else bool(req.strict_mode),
     }
     final = await agent.ainvoke(state)
     _log_interaction(final, req.domain, req.message, user_id=user["user_id"])
@@ -220,6 +229,7 @@ async def chat_stream(
     web_enabled: Optional[bool] = None,
     youtube_enabled: Optional[bool] = None,
     summarizer_model: Optional[str] = None,
+    strict_mode: Optional[bool] = None,
     history: Optional[str] = None,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
@@ -243,11 +253,12 @@ async def chat_stream(
             "domain": domain,  # NEW: pass domain to agent
             "embed_backend": embed_backend,
             "force_research": bool(research_only),
-            "rerank": bool(rerank),
-            "KB_THRESHOLD": float(kb_threshold) if kb_threshold is not None else 0.45,
-            "web_enabled": True if web_enabled is None else bool(web_enabled),
+            "rerank": True if rerank is None else bool(rerank),
+            "KB_THRESHOLD": float(kb_threshold) if kb_threshold is not None else None,
+            "web_enabled": False if web_enabled is None else bool(web_enabled),
             "youtube_enabled": bool(youtube_enabled) if youtube_enabled else False,
             "summarizer_model": (summarizer_model or "none"),
+            "strict_mode": True if strict_mode is None else bool(strict_mode),
         }
         final = await agent.ainvoke(state)
         _log_interaction(final, domain, message, user_id=user["user_id"])

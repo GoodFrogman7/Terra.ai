@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Terra.ai** — a citation-grounded customer support copilot for regulated industries (Finance, Healthcare), built as a FastAPI backend + Streamlit UI, using a LangGraph-based agent pipeline: KB retrieval first, web search fallback, with local Ollama LLMs (or a heuristic fallback) for summarization — no cloud LLM dependency required. The local-LLM-only architecture is a deliberate positioning choice: customer data never leaves the deployment, which matters for finance/healthcare buyers.
+**Terra.ai** is a citation-grounded support copilot for finance and healthcare, built as a FastAPI backend and Streamlit UI. It uses KB retrieval first, optional approved web research, and local Ollama models or a heuristic fallback for summarization. Web research is disabled by default, but when enabled it sends the question to the configured provider.
 
 Previously scoped as a 3-domain demo including Google Pixel device support; that domain was dropped (IP/employer-ownership reasons) and the product now focuses exclusively on Finance + Healthcare.
 
@@ -50,10 +50,10 @@ python tools/generate_finance_kb.py
 python tools/generate_healthcare_kb.py
 ```
 
-Run the test suite with `pytest tests -q` (deps in `requirements-dev.txt`; no network/Ollama needed — CI runs the same). There is still no linter/formatter config — match existing formatting by hand. For behavior not covered by tests, verify by exercising the API/UI directly (see `/verify` skill) or via the retriever debug commands above.
+Run the test suite with `pytest tests -q` (no network/Ollama needed). There is still no linter/formatter config; match existing formatting by hand. For behavior not covered by tests, verify by exercising the API/UI directly or via the retriever debug commands above.
 
 ### Optional environment variables
-- `TAVILY_API_KEY` — enables web search fallback (without it, web search returns empty results and the agent falls back to KB-no-answer / general-knowledge LLM answer).
+- `TAVILY_API_KEY` - enables opt-in web search. Web research is disabled by default; when enabled, the query is sent to Tavily and returned sources are filtered by `ALLOWED_WEB_DOMAINS` when set.
 - `OLLAMA_HOST` — defaults to `http://localhost:11434`; needed for any `ollama:*` summarizer or embedding backend.
 - `EMBED_BACKEND` — `hash` (default, no dependencies) or `ollama:<model>` (e.g. `ollama:nomic-embed-text`). The index must be rebuilt when this changes; retrieval always re-embeds queries using whatever backend the *loaded index* was built with (`meta.embed_backend`), not necessarily the current env var.
 - `KB_DIR` / `INDEX_DIR` — legacy single-domain paths (used by `/upload` and `/reindex` only when no `domain` is given). Per-domain paths come from `config/domains.json` instead.
@@ -61,9 +61,9 @@ Run the test suite with `pytest tests -q` (deps in `requirements-dev.txt`; no ne
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` — when BOTH set, auth mode turns on: all API routes require a Supabase JWT (`Authorization: Bearer`), data is scoped per user, and the UI shows a login screen. When unset, single-user "local" mode (no auth) — this is what CI and fresh clones get. Auth logic lives in `core/auth/supabase_auth.py`; the pre-multi-tenancy SQLite data is auto-migrated to user_id "local" on first open.
 - `DEMO_INVITE_CODE` — when set (and auth mode is on), `POST /auth/signup` requires a matching `invite_code` field or is rejected with 403 before any Supabase call; unset (or local mode) = signup behaves as before.
 - `RATE_LIMIT_PER_MINUTE` — in-memory sliding-window rate limit on `/chat`, `/chat_stream`, `/upload`, `/auth/signup`, `/auth/login` (keyed by user_id in auth mode, client IP otherwise; 429 on exceed). Default 60; `0` disables. Logic in `apps/api/rate_limit.py`.
-- `DEMO_MODE` — UI-only flag (`true`/`1`/`yes`). When on, the Streamlit sidebar hides engineering internals (agent graph, KB threshold, re-ranking, embeddings backend, summarizer, YouTube) and uses fixed demo defaults (hash embeddings, heuristic summarizer, τ=0.45), leaving a clean product surface (domain picker, chat, web-search toggle, memory, upload). Off = full dev view. Set on public/prospect deployments.
+- `DEMO_MODE` - UI-only flag (`true`/`1`/`yes`). When on, the Streamlit UI presents the finance-first Terra Policy Desk surface, hides engineering controls, uses hash embeddings and the heuristic summarizer, keeps external web disabled by default, and leaves healthcare available in development mode. Off = full dev view.
 - `ANALYTICS_DB_PATH` — SQLite path for the analytics store (default `data/memory/analytics.db`).
-- `ALLOWED_WEB_DOMAINS` — comma-separated allowlist restricting Tavily results; empty = allow all.
+- `ALLOWED_WEB_DOMAINS` - comma-separated hostname allowlist for Tavily results; empty permits all hosts, so set it for any customer deployment.
 - `MEMORY_DEBUG=true` — verbose logging for memory injection/store code paths.
 
 ## Architecture
@@ -96,8 +96,9 @@ Two domains — `finance`, `healthcare` — each with its own KB directory (`dat
 
 - Chunking (`_smart_chunk`) respects paragraph/markdown-header/sentence boundaries (`CHUNK_SIZE=600` chars, `CHUNK_OVERLAP=100` chars) rather than naive fixed-size splitting.
 - Embeddings: `hash` backend (deterministic bag-of-words hashing, zero dependencies, default) or `ollama:<model>` (real embeddings via Ollama's `/api/embeddings`, falls back to hash on error). The backend is stored in the index's `meta.embed_backend` and reused for query-time embedding so index and query vectors stay compatible even if the env var changes later.
-- Optional keyword-overlap reranking (`_rerank`) blends embedding cosine score (70%) with token overlap (30%); off by default, toggled via request's `rerank` flag.
-- `kb_retrieve_with_confidence` returns `(hits, confidence)` where confidence is the mean of top-k cosine scores, capped at 0.98 — this confidence is what `route_after_kb` compares against the threshold.
+- Hash retrieval treats cosine similarity as a candidate signal, then requires meaningful query-term overlap before a hit can be used. Multi-term queries need at least two matching terms, and reranking prioritizes evidence coverage.
+- `kb_retrieve_with_confidence` returns `(hits, confidence)` where confidence is the strongest grounded hit score. API requests default to a backend-calibrated threshold and enable reranking unless explicitly disabled.
+- PDFs are extracted with `pypdf`; unreadable PDFs are rejected by `/upload` instead of indexing a filename placeholder.
 - Index auto-builds on first load if missing (`_load_index`); `/upload` and `/reindex` API endpoints force a rebuild.
 
 ### Memory system (additive, isolated)
@@ -128,7 +129,7 @@ Do not refactor working retrieval logic (`core/rag/retriever.py` chunking/embedd
 
 ## Testing changes
 
-There's no automated test suite — after every change, verify manually:
+Automated tests live under `tests/`; run `pytest tests -q` after every change. Also verify manually:
 - Run the API locally and exercise `/chat` (or `/chat_stream`) for both domains (finance, healthcare) to confirm no cross-domain leakage.
 - Test `/upload` with a real file and confirm reindex picks it up.
 - Test memory endpoints (`/memory/*`) — chat creation, message add, retrieval.

@@ -17,7 +17,7 @@ def route_after_kb(state: Dict[str, Any]) -> str:
     conf = float(state.get("kb_conf", 0.0))
     threshold = float(state.get("KB_THRESHOLD", 0.62))
     force = bool(state.get("force_research", False))
-    web_enabled = bool(state.get("web_enabled", True))
+    web_enabled = bool(state.get("web_enabled", False))
     if (conf >= threshold) and not force:
         return "answer_from_kb"
     if not web_enabled:

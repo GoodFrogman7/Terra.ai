@@ -57,6 +57,7 @@ class AnalyticsStore:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(interactions)")}
             if "user_id" not in cols:
                 conn.execute("ALTER TABLE interactions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_user_id ON interactions(user_id, id DESC)")
             conn.commit()
 
     def log_interaction(
@@ -91,34 +92,39 @@ class AnalyticsStore:
         except Exception as e:
             logger.warning(f"[ANALYTICS] Failed to log interaction: {e}")
 
-    def summary(self, domain: Optional[str] = None) -> Dict[str, Any]:
+    def summary(self, domain: Optional[str] = None, user_id: str = "local") -> Dict[str, Any]:
         """Aggregate stats for the dashboard: totals, source breakdown, avg confidence."""
-        where = "WHERE domain = ?" if domain else ""
-        params = (domain,) if domain else ()
+        clauses = ["user_id = ?"]
+        params: List[Any] = [user_id]
+        if domain:
+            clauses.append("domain = ?")
+            params.append(domain)
+        where = f"WHERE {' AND '.join(clauses)}"
+        query_params = tuple(params)
         with self._get_conn() as conn:
-            total = conn.execute(f"SELECT COUNT(*) c FROM interactions {where}", params).fetchone()["c"]
+            total = conn.execute(f"SELECT COUNT(*) c FROM interactions {where}", query_params).fetchone()["c"]
             by_source = {
                 row["source"]: row["c"]
                 for row in conn.execute(
-                    f"SELECT source, COUNT(*) c FROM interactions {where} GROUP BY source", params
+                    f"SELECT source, COUNT(*) c FROM interactions {where} GROUP BY source", query_params
                 )
             }
             by_domain = {
                 row["domain"]: row["c"]
                 for row in conn.execute(
-                    f"SELECT domain, COUNT(*) c FROM interactions {where} GROUP BY domain", params
+                    f"SELECT domain, COUNT(*) c FROM interactions {where} GROUP BY domain", query_params
                 )
             }
             avg_conf_row = conn.execute(
-                f"SELECT AVG(kb_conf) a FROM interactions {where}", params
+                f"SELECT AVG(kb_conf) a FROM interactions {where}", query_params
             ).fetchone()
             cited = conn.execute(
-                f"SELECT COUNT(*) c FROM interactions {where}{' AND' if where else 'WHERE'} num_citations > 0",
-                params,
+                f"SELECT COUNT(*) c FROM interactions {where} AND num_citations > 0",
+                query_params,
             ).fetchone()["c"]
             escalated = conn.execute(
-                f"SELECT COUNT(*) c FROM interactions {where}{' AND' if where else 'WHERE'} policy_flags != '[]'",
-                params,
+                f"SELECT COUNT(*) c FROM interactions {where} AND policy_flags != '[]'",
+                query_params,
             ).fetchone()["c"]
 
         grounded = by_source.get("kb", 0) + by_source.get("web", 0)
@@ -132,11 +138,11 @@ class AnalyticsStore:
             "avg_kb_confidence": round(avg_conf_row["a"], 4) if avg_conf_row["a"] is not None else None,
         }
 
-    def recent(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def recent(self, limit: int = 50, user_id: str = "local") -> List[Dict[str, Any]]:
         """Most recent interactions for the dashboard table."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM interactions ORDER BY id DESC LIMIT ?", (limit,)
+                "SELECT * FROM interactions WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit)
             ).fetchall()
             return [
                 {

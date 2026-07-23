@@ -11,6 +11,7 @@ API_BASE = os.getenv("COPILOT_API_BASE", "http://127.0.0.1:8000")
 # Demo mode hides engineering internals (agent graph, retrieval/embedding knobs)
 # so public/prospect deployments present a clean product surface, not a lab console.
 DEMO_MODE = os.getenv("DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
+PRODUCT_NAME = "Terra Policy Desk" if DEMO_MODE else "Terra.ai"
 
 
 # ============ Auth Helpers ============
@@ -145,12 +146,12 @@ def _format_timestamp(ts: str) -> str:
     except Exception:
         return ""
 
-st.set_page_config(page_title="Terra.ai", layout="wide")
+st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 # ============ Login Gate ============
 if _api_auth_status() and not st.session_state.get("access_token"):
-    st.title("Terra.ai")
-    st.caption("Grounded, citation-backed AI support for regulated industries.")
+    st.title(PRODUCT_NAME)
+    st.caption("Source-linked policy support for regulated teams.")
     login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
     with login_tab:
         with st.form("login_form"):
@@ -192,6 +193,11 @@ if _api_auth_status() and not st.session_state.get("access_token"):
 # Load config from API (domains, models, backends) — single source of truth
 _config = _api_get_config()
 _domains = _config.get("domains", {})
+if DEMO_MODE and "finance" in _domains:
+    finance_domain = dict(_domains["finance"])
+    finance_domain["name"] = "Finance Policy Desk"
+    finance_domain["description"] = "Operations and member-service policy guidance"
+    _domains = {"finance": finance_domain}
 
 # Initialize domain state
 _default_domain = next(iter(_domains), "finance")
@@ -201,7 +207,11 @@ if "last_domain" not in st.session_state:
 # Dynamic title based on agent mode
 current_domain = st.session_state.get("last_domain", _default_domain)
 _domain_display = _domains.get(current_domain, {}).get("name", current_domain.title())
-st.title(f"Terra.ai — {_domain_display} (KB-first → Web fallback)")
+if DEMO_MODE:
+    _demo_workspace = st.session_state.get("demo_workspace", "Policy")
+    st.title("Terra Policy Desk - Finance Policy Copilot" if _demo_workspace == "Policy" else "Terra Research Desk")
+else:
+    st.title(f"Terra.ai - {_domain_display}")
 
 
 def _extract_topic(question: str) -> str:
@@ -221,33 +231,6 @@ def _extract_topic(question: str) -> str:
     q = re.sub(r'\s+', ' ', q).strip()
     topic = q.title() if q else "General"
     return topic[:30] + "..." if len(topic) > 30 else topic
-
-
-def _build_context_prompt(history: list, current_query: str) -> str:
-    """Build a context-aware query from conversation history."""
-    if not history:
-        return current_query
-    
-    q_lower = current_query.lower()
-    is_followup = (
-        len(current_query.split()) <= 6 or
-        any(word in q_lower for word in ['he', 'she', 'it', 'they', 'that', 'this', 'there', 'him', 'her', 'his', 'their'])
-    )
-    
-    if is_followup and len(history) >= 2:
-        recent_context = []
-        for msg in history[-4:]:
-            if msg["role"] == "user":
-                recent_context.append(f"Previous question: {msg['content']}")
-            elif msg["role"] == "assistant":
-                answer = re.sub(r'^\*\*\((KB|Web)\)\*\*\s*', '', msg["content"])
-                first_sent = answer.split('.')[0] if '.' in answer else answer[:100]
-                recent_context.append(f"Previous answer: {first_sent}")
-        
-        context_str = " | ".join(recent_context[-2:])
-        return f"Context: [{context_str}] Current question: {current_query}"
-    
-    return current_query
 
 
 # Initialize session states
@@ -436,17 +419,19 @@ with st.sidebar:
     st.markdown("---")
     
     # ============ Agent Mode Selection ============
-    st.subheader("🤖 Agent Mode")
+    st.subheader("Policy library" if DEMO_MODE else "🤖 Agent Mode")
     
-    agent_mode = st.selectbox(
-        "Select Agent",
-        [v.get("name", k) for k, v in _domains.items()],
-        key="agent_mode"
-    )
-
-    # Map display names back to domain keys (from API config)
-    domain_map = {v.get("name", k): k for k, v in _domains.items()}
-    current_domain = domain_map[agent_mode]
+    if DEMO_MODE:
+        st.caption("Finance operations and member-service guidance")
+        current_domain = "finance"
+    else:
+        agent_mode = st.selectbox(
+            "Select Agent",
+            [v.get("name", k) for k, v in _domains.items()],
+            key="agent_mode"
+        )
+        domain_map = {v.get("name", k): k for k, v in _domains.items()}
+        current_domain = domain_map[agent_mode]
 
     # Preserve chat history per domain on switch (no destructive wipe)
     if "domain_chats" not in st.session_state:
@@ -464,6 +449,8 @@ with st.sidebar:
         st.session_state.persistent_chat_id = restored.get("chat_id")
         st.session_state.last_domain = current_domain
         st.rerun()
+
+    _domain_display = _domains.get(current_domain, {}).get("name", current_domain.title())
     
     st.markdown("---")
     
@@ -471,25 +458,54 @@ with st.sidebar:
     st.header("Options")
     
     # Memory toggle (NEW)
-    memory_enabled = st.checkbox("💾 Enable Memory", value=st.session_state.memory_enabled, 
+    memory_enabled = st.checkbox("💾 Save chats", value=st.session_state.memory_enabled,
                                   help="Save chat history persistently")
     if memory_enabled != st.session_state.memory_enabled:
         st.session_state.memory_enabled = memory_enabled
     
-    # Web search is a user-facing product feature, so keep it visible in demo mode.
-    web_enabled = st.checkbox("Enable Web Search (fallback)", value=True)
+    web_enabled = st.checkbox(
+        "Use approved web sources when needed",
+        value=False,
+        help="This sends the question to the configured research provider and only shows approved domains.",
+    )
 
     if DEMO_MODE:
-        # Clean product surface: hide engineering internals, use sane fixed defaults.
-        kb_threshold = 0.45
-        research_only = False
+        demo_workspace = st.radio(
+            "Workspace",
+            ("Policy", "Research"),
+            horizontal=True,
+            key="demo_workspace",
+        )
+        kb_threshold = st.slider(
+            "KB confidence threshold",
+            0.0,
+            0.95,
+            0.42,
+            0.01,
+            key=f"kb_threshold_{demo_workspace.lower()}",
+        )
         rerank = True
-        youtube_enabled = False
         embed_backend = "hash"
         summarizer_model = "none"
         show_graph = False
+        if demo_workspace == "Policy":
+            strict_mode = True
+            research_only = False
+            youtube_enabled = False
+        else:
+            strict_mode = False
+            research_only = False
+            youtube_enabled = True
+            _research_models = [model for model in _config.get("summarizer_models", []) if model != "none"] or ["llama3.1:8b"]
+            _research_default = _research_models.index("llama3.1:8b") if "llama3.1:8b" in _research_models else 0
+            summarizer_model = st.selectbox(
+                "Research model",
+                _research_models,
+                index=_research_default,
+                key="research_model",
+            )
     else:
-        kb_threshold = st.slider("KB Confidence Threshold (τ)", 0.0, 0.95, 0.45, 0.01)
+        kb_threshold = st.slider("KB Confidence Threshold (τ)", 0.0, 0.95, 0.42, 0.01)
         research_only = st.checkbox("Research only (skip KB)", value=False)
         rerank = st.checkbox("Enable Re-ranking", value=True)
         youtube_enabled = st.checkbox("Enable YouTube Suggestions", value=False)
@@ -507,6 +523,8 @@ with st.sidebar:
             "Summarizer LLM (Ollama)", _sum_options, index=_sum_default,
             help='"none" uses a fast deterministic heuristic; other options need the model pulled in Ollama',
         )
+
+        strict_mode = st.checkbox("Require source-backed answers", value=True)
 
         show_graph = st.checkbox("Show agent graph", value=True)
 
@@ -542,7 +560,7 @@ for m in st.session_state.chat_history:
 # Chat input
 prompt = st.chat_input("Ask a question...")
 
-def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, history_msgs, web_enabled, youtube_enabled, summarizer_model, domain):
+def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, history_msgs, web_enabled, youtube_enabled, summarizer_model, strict_mode, domain):
     params = {
         "message": message,
         "domain": domain,
@@ -553,6 +571,7 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
         "web_enabled": web_enabled,
         "youtube_enabled": youtube_enabled,
         "summarizer_model": summarizer_model,
+        "strict_mode": strict_mode,
         "history": json.dumps(history_msgs)
     }
     placeholder = st.empty()
@@ -578,9 +597,10 @@ def _stream_api(message, kb_threshold, research_only, rerank, embed_backend, his
         full_answer = "".join(answer_chunks)
         placeholder.markdown(full_answer)
 
-        # Trust indicator: flag answers that aren't grounded in KB/web sources
-        if source in ("general_knowledge", "none"):
-            st.caption("⚠️ Not grounded in a verified source — model general knowledge only.")
+        if source == "none":
+            st.caption("Unable to verify this answer in the configured sources.")
+        elif source == "general_knowledge":
+            st.caption("General knowledge response. Verify it before relying on it for a policy decision.")
 
         # Render "Sources" block for grounded (KB/web) answers
         if citations:
@@ -634,8 +654,6 @@ if prompt:
             st.session_state.persistent_chat_id = result["chat_id"]
             st.session_state.chat_list_cache = _api_list_chats()
     
-    context_query = _build_context_prompt(st.session_state.chat_history, prompt)
-    
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     
     # Save user message to persistent storage
@@ -647,7 +665,7 @@ if prompt:
     with st.chat_message("assistant"):
         try:
             ans = _stream_api(
-                message=context_query,
+                message=prompt,
                 kb_threshold=kb_threshold,
                 research_only=research_only,
                 rerank=rerank,
@@ -656,6 +674,7 @@ if prompt:
                 web_enabled=web_enabled,
                 youtube_enabled=youtube_enabled,
                 summarizer_model=summarizer_model,
+                strict_mode=strict_mode,
                 domain=st.session_state.get("last_domain", "finance"),
             )
             st.session_state.chat_history.append({"role": "assistant", "content": ans})
